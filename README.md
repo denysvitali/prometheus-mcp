@@ -50,7 +50,7 @@ push to `main` and for every tag:
 
 ```sh
 docker run --rm -p 8080:8080 \
-  -e PROMETHEUS_MCP_PROMETHEUS_URL=https://prometheus.example.com \
+  -e PROMETHEUS_MCP_URL=https://prometheus.example.com \
   ghcr.io/denysvitali/prometheus-mcp:latest
 ```
 
@@ -59,7 +59,7 @@ docker run --rm -p 8080:8080 \
 ### stdio
 
 ```sh
-prometheus-mcp stdio --prometheus-url https://prometheus.example.com
+prometheus-mcp stdio --url https://prometheus.example.com
 ```
 
 Example Claude Desktop / IDE config:
@@ -71,8 +71,8 @@ Example Claude Desktop / IDE config:
       "command": "prometheus-mcp",
       "args": ["stdio"],
       "env": {
-        "PROMETHEUS_MCP_PROMETHEUS_URL": "https://prometheus.example.com",
-        "PROMETHEUS_MCP_PROMETHEUS_BEARER_TOKEN": "..."
+        "PROMETHEUS_MCP_URL": "https://prometheus.example.com",
+        "PROMETHEUS_MCP_BEARER_TOKEN": "..."
       }
     }
   }
@@ -83,7 +83,7 @@ Example Claude Desktop / IDE config:
 
 ```sh
 prometheus-mcp http \
-  --prometheus-url https://prometheus.example.com \
+  --url https://prometheus.example.com \
   --listen-address :8080 \
   --path /mcp
 ```
@@ -97,27 +97,29 @@ sessions.
 All flags can be supplied via environment variables, using the prefix
 `PROMETHEUS_MCP_` and replacing dots/dashes with underscores:
 
-| Flag                                    | Env var                                          |
-| --------------------------------------- | ------------------------------------------------ |
-| `--prometheus-url`                      | `PROMETHEUS_MCP_PROMETHEUS_URL`                  |
-| `--prometheus-bearer-token`             | `PROMETHEUS_MCP_PROMETHEUS_BEARER_TOKEN`         |
-| `--prometheus-basic-auth-username`      | `PROMETHEUS_MCP_PROMETHEUS_BASIC_AUTH_USERNAME`  |
-| `--prometheus-basic-auth-password`      | `PROMETHEUS_MCP_PROMETHEUS_BASIC_AUTH_PASSWORD`  |
-| `--prometheus-tls-insecure-skip-verify` | `PROMETHEUS_MCP_PROMETHEUS_TLS_INSECURE_SKIP_VERIFY` |
-| `--log-level`                           | `PROMETHEUS_MCP_LOG_LEVEL`                       |
-| `--listen-address` (http)               | `PROMETHEUS_MCP_HTTP_LISTEN_ADDRESS`             |
-| `--path` (http)                         | `PROMETHEUS_MCP_HTTP_PATH`                       |
-| `--stateless` (http)                    | `PROMETHEUS_MCP_HTTP_STATELESS`                  |
+| Flag                         | Env var                                    |
+| ---------------------------- | ------------------------------------------ |
+| `--url`                      | `PROMETHEUS_MCP_URL`                       |
+| `--bearer-token`             | `PROMETHEUS_MCP_BEARER_TOKEN`              |
+| `--basic-auth-username`      | `PROMETHEUS_MCP_BASIC_AUTH_USERNAME`       |
+| `--basic-auth-password`      | `PROMETHEUS_MCP_BASIC_AUTH_PASSWORD`       |
+| `--tls-insecure-skip-verify` | `PROMETHEUS_MCP_TLS_INSECURE_SKIP_VERIFY`  |
+| `--log-level`                | `PROMETHEUS_MCP_LOG_LEVEL`                 |
+| `--listen-address` (http)    | `PROMETHEUS_MCP_HTTP_LISTEN_ADDRESS`       |
+| `--path` (http)              | `PROMETHEUS_MCP_HTTP_PATH`                 |
+| `--stateless` (http)         | `PROMETHEUS_MCP_HTTP_STATELESS`            |
 
 A YAML config file can also be used (`--config` or
 `~/.prometheus-mcp.yaml`):
 
 ```yaml
-prometheus:
-  url: https://prometheus.example.com
-  bearer-token: ey...
-  tls:
-    insecure-skip-verify: false
+url: https://prometheus.example.com
+bearer-token: ey...
+tls:
+  insecure-skip-verify: false
+basic-auth:
+  username: ""
+  password: ""
 http:
   listen-address: :8080
   path: /mcp
