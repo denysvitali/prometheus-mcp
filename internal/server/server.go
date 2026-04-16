@@ -7,10 +7,10 @@ import (
 	"github.com/denysvitali/prometheus-mcp/internal/prometheus"
 )
 
-const (
-	serverName    = "prometheus-mcp"
-	serverVersion = "0.1.0"
-)
+const serverName = "prometheus-mcp"
+
+// Version is the server version, overridden at build time via -ldflags.
+var Version = "dev"
 
 type Server struct {
 	logger *logrus.Logger
@@ -21,7 +21,7 @@ type Server struct {
 func New(logger *logrus.Logger, prom *prometheus.Client) *Server {
 	mcpSrv := server.NewMCPServer(
 		serverName,
-		serverVersion,
+		Version,
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)
