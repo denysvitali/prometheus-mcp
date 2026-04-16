@@ -1,0 +1,8 @@
+/prometheus-mcp
+/dist/
+/.idea/
+/.vscode/
+*.test
+*.out
+*.log
+.DS_Store
