@@ -43,6 +43,17 @@ cd prometheus-mcp
 go build -o prometheus-mcp .
 ```
 
+### Docker
+
+Multi-arch images (`linux/amd64`, `linux/arm64`) are published to GHCR on every
+push to `main` and for every tag:
+
+```sh
+docker run --rm -p 8080:8080 \
+  -e PROMETHEUS_MCP_PROMETHEUS_URL=https://prometheus.example.com \
+  ghcr.io/denysvitali/prometheus-mcp:latest
+```
+
 ## Usage
 
 ### stdio
