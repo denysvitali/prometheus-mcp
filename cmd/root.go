@@ -51,18 +51,18 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: $HOME/.prometheus-mcp.yaml)")
-	rootCmd.PersistentFlags().String("prometheus-url", "http://localhost:9090", "Base URL of the Prometheus server")
-	rootCmd.PersistentFlags().String("prometheus-bearer-token", "", "Bearer token for Prometheus authentication")
-	rootCmd.PersistentFlags().String("prometheus-basic-auth-username", "", "HTTP basic auth username for Prometheus")
-	rootCmd.PersistentFlags().String("prometheus-basic-auth-password", "", "HTTP basic auth password for Prometheus")
-	rootCmd.PersistentFlags().Bool("prometheus-tls-insecure-skip-verify", false, "Skip verification of Prometheus TLS certificates")
+	rootCmd.PersistentFlags().String("url", "http://localhost:9090", "Base URL of the Prometheus server")
+	rootCmd.PersistentFlags().String("bearer-token", "", "Bearer token for Prometheus authentication")
+	rootCmd.PersistentFlags().String("basic-auth-username", "", "HTTP basic auth username for Prometheus")
+	rootCmd.PersistentFlags().String("basic-auth-password", "", "HTTP basic auth password for Prometheus")
+	rootCmd.PersistentFlags().Bool("tls-insecure-skip-verify", false, "Skip verification of Prometheus TLS certificates")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (trace, debug, info, warn, error)")
 
-	_ = viper.BindPFlag("prometheus.url", rootCmd.PersistentFlags().Lookup("prometheus-url"))
-	_ = viper.BindPFlag("prometheus.bearer-token", rootCmd.PersistentFlags().Lookup("prometheus-bearer-token"))
-	_ = viper.BindPFlag("prometheus.basic-auth.username", rootCmd.PersistentFlags().Lookup("prometheus-basic-auth-username"))
-	_ = viper.BindPFlag("prometheus.basic-auth.password", rootCmd.PersistentFlags().Lookup("prometheus-basic-auth-password"))
-	_ = viper.BindPFlag("prometheus.tls.insecure-skip-verify", rootCmd.PersistentFlags().Lookup("prometheus-tls-insecure-skip-verify"))
+	_ = viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
+	_ = viper.BindPFlag("bearer-token", rootCmd.PersistentFlags().Lookup("bearer-token"))
+	_ = viper.BindPFlag("basic-auth.username", rootCmd.PersistentFlags().Lookup("basic-auth-username"))
+	_ = viper.BindPFlag("basic-auth.password", rootCmd.PersistentFlags().Lookup("basic-auth-password"))
+	_ = viper.BindPFlag("tls.insecure-skip-verify", rootCmd.PersistentFlags().Lookup("tls-insecure-skip-verify"))
 	_ = viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 }
 

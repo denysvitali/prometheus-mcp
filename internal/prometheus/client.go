@@ -16,26 +16,26 @@ type Client struct {
 }
 
 func NewFromViper(v *viper.Viper) (*Client, error) {
-	url := v.GetString("prometheus.url")
+	url := v.GetString("url")
 	if url == "" {
-		return nil, fmt.Errorf("prometheus.url is required")
+		return nil, fmt.Errorf("url is required")
 	}
 
 	cfg := api.Config{Address: url}
 
 	transport := &http.Transport{}
-	if v.GetBool("prometheus.tls.insecure-skip-verify") {
+	if v.GetBool("tls.insecure-skip-verify") {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
 	var rt http.RoundTripper = transport
 
-	if token := v.GetString("prometheus.bearer-token"); token != "" {
+	if token := v.GetString("bearer-token"); token != "" {
 		rt = &bearerAuthTransport{token: token, next: rt}
-	} else if user := v.GetString("prometheus.basic-auth.username"); user != "" {
+	} else if user := v.GetString("basic-auth.username"); user != "" {
 		rt = &basicAuthTransport{
 			username: user,
-			password: v.GetString("prometheus.basic-auth.password"),
+			password: v.GetString("basic-auth.password"),
 			next:     rt,
 		}
 	}
