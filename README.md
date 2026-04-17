@@ -17,6 +17,7 @@ and speaks MCP via [mcp-go](https://github.com/mark3labs/mcp-go).
 
 | Name                       | Description                                            |
 | -------------------------- | ------------------------------------------------------ |
+| `prometheus_search`        | Rank metrics by relevance to a keyword / NL query.     |
 | `prometheus_query`         | Evaluate an instant PromQL query.                      |
 | `prometheus_query_range`   | Evaluate a PromQL query over a time range.             |
 | `prometheus_label_names`   | List label names in the TSDB.                          |
@@ -28,6 +29,15 @@ and speaks MCP via [mcp-go](https://github.com/mark3labs/mcp-go).
 | `prometheus_metadata`      | Return metadata (type, help, unit) for metrics.        |
 | `prometheus_buildinfo`     | Return Prometheus server build info.                   |
 | `prometheus_runtimeinfo`   | Return Prometheus server runtime info.                 |
+
+### Metric search
+
+`prometheus_search` is a BM25 index built in-process from the `/api/v1/metadata`
+endpoint. It lets an MCP client discover relevant metrics from a keyword or
+natural-language query without dumping the entire series catalogue into
+context (e.g. `"http request latency"` → `http_request_duration_seconds`).
+The index is rebuilt periodically; control the cadence with
+`--search-refresh-interval` (default `5m`, `0` disables).
 
 ## Install
 
@@ -104,6 +114,7 @@ All flags can be supplied via environment variables, using the prefix
 | `--basic-auth-username`      | `PROMETHEUS_MCP_BASIC_AUTH_USERNAME`       |
 | `--basic-auth-password`      | `PROMETHEUS_MCP_BASIC_AUTH_PASSWORD`       |
 | `--tls-insecure-skip-verify` | `PROMETHEUS_MCP_TLS_INSECURE_SKIP_VERIFY`  |
+| `--search-refresh-interval`  | `PROMETHEUS_MCP_SEARCH_REFRESH_INTERVAL`   |
 | `--log-level`                | `PROMETHEUS_MCP_LOG_LEVEL`                 |
 | `--listen-address` (http)    | `PROMETHEUS_MCP_HTTP_LISTEN_ADDRESS`       |
 | `--path` (http)              | `PROMETHEUS_MCP_HTTP_PATH`                 |
@@ -123,6 +134,8 @@ basic-auth:
 http:
   listen-address: :8080
   path: /mcp
+search:
+  refresh-interval: 5m
 log-level: info
 ```
 
