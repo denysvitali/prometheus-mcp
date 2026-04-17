@@ -11,6 +11,7 @@ import (
 )
 
 func (s *Server) registerTools() {
+	s.mcp.AddTool(s.toolSearch())
 	s.mcp.AddTool(s.toolQuery())
 	s.mcp.AddTool(s.toolQueryRange())
 	s.mcp.AddTool(s.toolLabelNames())
@@ -22,6 +23,40 @@ func (s *Server) registerTools() {
 	s.mcp.AddTool(s.toolMetadata())
 	s.mcp.AddTool(s.toolBuildInfo())
 	s.mcp.AddTool(s.toolRuntimeInfo())
+}
+
+func (s *Server) toolSearch() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	tool := mcp.NewTool("prometheus_search",
+		mcp.WithDescription("Search the Prometheus metric catalogue (names, help text, units) by keyword or natural-language query. Use this first to discover relevant metrics before running queries."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("query", mcp.Required(),
+			mcp.Description("Keyword or natural-language query (e.g. 'http request latency', 'node memory free', 'kube pod status').")),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of hits to return. Defaults to 20.")),
+	)
+
+	handler := func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		query, err := req.RequireString("query")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		limit := req.GetInt("limit", 20)
+
+		if s.index.Size() == 0 {
+			return mcp.NewToolResultError("metric index is not ready yet; wait a few seconds after startup or check server logs for refresh errors"), nil
+		}
+		hits := s.index.Search(query, limit)
+		return jsonResult(map[string]any{
+			"query":           query,
+			"results":         hits,
+			"result_count":    len(hits),
+			"indexed_metrics": s.index.Size(),
+			"index_updated":   s.index.UpdatedAt().UTC().Format(time.RFC3339),
+		})
+	}
+
+	return tool, handler
 }
 
 func (s *Server) toolQuery() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {

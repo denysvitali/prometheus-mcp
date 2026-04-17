@@ -1,6 +1,11 @@
 package cmd
 
 import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
@@ -11,12 +16,19 @@ import (
 var httpCmd = &cobra.Command{
 	Use:   "http",
 	Short: "Run the MCP server over streamable HTTP",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		promClient, err := prometheus.NewFromViper(viper.GetViper())
 		if err != nil {
 			return err
 		}
-		srv := server.New(logger, promClient)
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+
+		srv := server.New(logger, promClient, server.Options{
+			RefreshInterval: viper.GetDuration("search.refresh-interval"),
+		})
+		srv.StartBackground(ctx)
+
 		addr := viper.GetString("http.listen-address")
 		path := viper.GetString("http.path")
 		stateless := viper.GetBool("http.stateless")

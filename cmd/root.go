@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -56,6 +57,7 @@ func init() {
 	rootCmd.PersistentFlags().String("basic-auth-username", "", "HTTP basic auth username for Prometheus")
 	rootCmd.PersistentFlags().String("basic-auth-password", "", "HTTP basic auth password for Prometheus")
 	rootCmd.PersistentFlags().Bool("tls-insecure-skip-verify", false, "Skip verification of Prometheus TLS certificates")
+	rootCmd.PersistentFlags().Duration("search-refresh-interval", 5*time.Minute, "How often to refresh the metric search index. Set to 0 to disable.")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (trace, debug, info, warn, error)")
 
 	_ = viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
@@ -63,6 +65,7 @@ func init() {
 	_ = viper.BindPFlag("basic-auth.username", rootCmd.PersistentFlags().Lookup("basic-auth-username"))
 	_ = viper.BindPFlag("basic-auth.password", rootCmd.PersistentFlags().Lookup("basic-auth-password"))
 	_ = viper.BindPFlag("tls.insecure-skip-verify", rootCmd.PersistentFlags().Lookup("tls-insecure-skip-verify"))
+	_ = viper.BindPFlag("search.refresh-interval", rootCmd.PersistentFlags().Lookup("search-refresh-interval"))
 	_ = viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 }
 
