@@ -24,6 +24,10 @@ var stdioCmd = &cobra.Command{
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
+		if err := maybePing(ctx, promClient); err != nil {
+			return err
+		}
+
 		srv := server.New(logger, promClient, server.Options{
 			RefreshInterval: viper.GetDuration("search.refresh-interval"),
 		})

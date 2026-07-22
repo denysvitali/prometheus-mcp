@@ -120,12 +120,16 @@ func (idx *Index) Build(docs []Document) {
 const (
 	bm25K1 = 1.2
 	bm25B  = 0.75
+	// prefixWeight discounts prefix-only term matches relative to exact ones.
+	prefixWeight = 0.5
 )
 
-// Search returns up to limit documents ranked by BM25 with a small
-// substring-match boost against the metric name. A non-positive limit returns
-// every scored document.
-func (idx *Index) Search(query string, limit int) []Hit {
+// Search returns up to limit documents ranked by relevance. Scoring combines
+// BM25 over the indexed terms with a discounted contribution from prefix
+// matches, so partial metric names (e.g. "http_req") still surface the right
+// series. An optional typeFilter restricts hits to a metric type. A
+// non-positive limit returns every scored document.
+func (idx *Index) Search(query string, limit int, typeFilter string) []Hit {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
@@ -136,22 +140,15 @@ func (idx *Index) Search(query string, limit int) []Hit {
 	if len(tokens) == 0 {
 		return nil
 	}
+	typeFilter = strings.ToLower(strings.TrimSpace(typeFilter))
 
 	scores := make(map[int]float64, 64)
 	for _, t := range tokens {
-		df := idx.docFreq[t]
-		if df == 0 {
-			continue
-		}
-		idf := math.Log(1 + (float64(idx.total)-float64(df)+0.5)/(float64(df)+0.5))
-		for _, p := range idx.postings[t] {
-			tf := float64(p.tf)
-			docLen := float64(idx.docLen[p.docID])
-			denom := tf + bm25K1*(1-bm25B+bm25B*docLen/idx.avgDocLen)
-			scores[p.docID] += idf * (tf * (bm25K1 + 1)) / denom
-		}
+		idx.scoreTerm(t, scores)
 	}
 
+	// Boost documents whose metric name contains the full query as a
+	// substring; this rewards exact phrase matches in the name.
 	qLower := strings.ToLower(strings.TrimSpace(query))
 	if qLower != "" {
 		for id := range scores {
@@ -162,7 +159,13 @@ func (idx *Index) Search(query string, limit int) []Hit {
 	}
 
 	ids := make([]int, 0, len(scores))
-	for id := range scores {
+	for id, sc := range scores {
+		if sc <= 0 {
+			continue
+		}
+		if typeFilter != "" && !strings.EqualFold(idx.docs[id].Type, typeFilter) {
+			continue
+		}
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool {
@@ -187,6 +190,30 @@ func (idx *Index) Search(query string, limit int) []Hit {
 		}
 	}
 	return hits
+}
+
+// scoreTerm adds the BM25 contribution of a single query token to scores.
+// Exact term matches are weighted fully; terms that merely share the token as
+// a prefix (and the token is at least 2 runes) contribute at a discount so
+// exact matches outrank prefix-only matches.
+func (idx *Index) scoreTerm(token string, scores map[int]float64) {
+	n := float64(idx.total)
+	for term, df := range idx.docFreq {
+		weight := 1.0
+		if term != token {
+			if len(token) < 2 || !strings.HasPrefix(term, token) {
+				continue
+			}
+			weight = prefixWeight
+		}
+		idf := math.Log(1 + (n-float64(df)+0.5)/(float64(df)+0.5))
+		for _, p := range idx.postings[term] {
+			tf := float64(p.tf)
+			docLen := float64(idx.docLen[p.docID])
+			denom := tf + bm25K1*(1-bm25B+bm25B*docLen/idx.avgDocLen)
+			scores[p.docID] += weight * idf * (tf * (bm25K1 + 1)) / denom
+		}
+	}
 }
 
 // Size reports the number of documents currently indexed.

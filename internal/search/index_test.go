@@ -35,7 +35,7 @@ func TestSearchRanksNameMatchesFirst(t *testing.T) {
 		{Metric: "process_cpu_seconds_total", Type: "counter", Help: "Total CPU time consumed."},
 	})
 
-	hits := idx.Search("http request latency", 10)
+	hits := idx.Search("http request latency", 10, "")
 	if len(hits) == 0 {
 		t.Fatal("expected hits, got none")
 	}
@@ -51,7 +51,7 @@ func TestSearchMatchesHelpText(t *testing.T) {
 		{Metric: "process_cpu_seconds_total", Help: "Total CPU time consumed."},
 	})
 
-	hits := idx.Search("free memory", 5)
+	hits := idx.Search("free memory", 5, "")
 	if len(hits) == 0 || hits[0].Metric != "node_memory_MemFree_bytes" {
 		t.Fatalf("expected node_memory_MemFree_bytes first, got %+v", hits)
 	}
@@ -59,7 +59,7 @@ func TestSearchMatchesHelpText(t *testing.T) {
 
 func TestSearchEmptyIndex(t *testing.T) {
 	idx := NewIndex()
-	if hits := idx.Search("anything", 10); hits != nil {
+	if hits := idx.Search("anything", 10, ""); hits != nil {
 		t.Errorf("empty index returned %v, want nil", hits)
 	}
 }
@@ -67,7 +67,7 @@ func TestSearchEmptyIndex(t *testing.T) {
 func TestSearchUnknownTerm(t *testing.T) {
 	idx := NewIndex()
 	idx.Build([]Document{{Metric: "up"}})
-	if hits := idx.Search("nonexistent", 10); len(hits) != 0 {
+	if hits := idx.Search("nonexistent", 10, ""); len(hits) != 0 {
 		t.Errorf("unknown term returned %v, want empty", hits)
 	}
 }
@@ -79,7 +79,7 @@ func TestSearchLimit(t *testing.T) {
 		{Metric: "http_request_duration_seconds", Help: "http request duration"},
 		{Metric: "http_response_size_bytes", Help: "http response size"},
 	})
-	hits := idx.Search("http", 2)
+	hits := idx.Search("http", 2, "")
 	if len(hits) != 2 {
 		t.Errorf("limit=2 returned %d hits", len(hits))
 	}
@@ -92,10 +92,46 @@ func TestSearchScoresDescending(t *testing.T) {
 		{Metric: "http_request_duration_seconds", Help: "http request latency"},
 		{Metric: "node_cpu_seconds_total", Help: "cpu time per mode"},
 	})
-	hits := idx.Search("http request", 0)
+	hits := idx.Search("http request", 0, "")
 	for i := 1; i < len(hits); i++ {
 		if hits[i-1].Score < hits[i].Score {
 			t.Fatalf("scores not descending: %+v", hits)
 		}
+	}
+}
+
+func TestSearchPrefixMatch(t *testing.T) {
+	idx := NewIndex()
+	idx.Build([]Document{
+		{Metric: "http_request_duration_seconds", Type: "histogram", Help: "Duration of HTTP requests."},
+		{Metric: "node_memory_MemFree_bytes", Type: "gauge", Help: "Free memory."},
+	})
+
+	// A partial metric-name prefix that is not a whole token should still
+	// surface the right metric via prefix matching.
+	hits := idx.Search("http_req", 5, "")
+	if len(hits) == 0 {
+		t.Fatal("expected prefix match, got none")
+	}
+	if hits[0].Metric != "http_request_duration_seconds" {
+		t.Errorf("prefix search top hit = %q, want http_request_duration_seconds", hits[0].Metric)
+	}
+}
+
+func TestSearchTypeFilter(t *testing.T) {
+	idx := NewIndex()
+	idx.Build([]Document{
+		{Metric: "http_requests_total", Type: "counter", Help: "Total HTTP requests."},
+		{Metric: "http_request_duration_seconds", Type: "histogram", Help: "HTTP request duration."},
+	})
+
+	hits := idx.Search("http request", 10, "counter")
+	for _, h := range hits {
+		if h.Type != "counter" {
+			t.Fatalf("type filter returned non-counter hit: %+v", h)
+		}
+	}
+	if len(hits) == 0 || hits[0].Metric != "http_requests_total" {
+		t.Fatalf("expected http_requests_total, got %+v", hits)
 	}
 }

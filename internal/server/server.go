@@ -3,6 +3,9 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -11,6 +14,10 @@ import (
 	"github.com/denysvitali/prometheus-mcp/internal/prometheus"
 	"github.com/denysvitali/prometheus-mcp/internal/search"
 )
+
+// shutdownTimeout bounds how long a graceful HTTP shutdown waits for in-flight
+// requests to drain.
+const shutdownTimeout = 15 * time.Second
 
 const serverName = "prometheus-mcp"
 
@@ -72,8 +79,10 @@ func (s *Server) ServeStdio() error {
 	return server.ServeStdio(s.mcp)
 }
 
-// ServeHTTP serves MCP over the streamable HTTP transport.
-func (s *Server) ServeHTTP(addr, path string, stateless bool) error {
+// ServeHTTP serves MCP over the streamable HTTP transport. It blocks until the
+// server exits; when ctx is cancelled it gracefully shuts down, draining
+// in-flight requests for up to shutdownTimeout.
+func (s *Server) ServeHTTP(ctx context.Context, addr, path string, stateless bool) error {
 	opts := []server.StreamableHTTPOption{
 		server.WithEndpointPath(path),
 	}
@@ -81,5 +90,26 @@ func (s *Server) ServeHTTP(addr, path string, stateless bool) error {
 		opts = append(opts, server.WithStateLess(true))
 	}
 	httpSrv := server.NewStreamableHTTPServer(s.mcp, opts...)
-	return httpSrv.Start(addr)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- httpSrv.Start(addr)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		s.logger.Info("shutting down http server")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		// Start returns http.ErrServerClosed after a clean Shutdown.
+		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
 }

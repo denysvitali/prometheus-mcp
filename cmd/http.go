@@ -24,6 +24,10 @@ var httpCmd = &cobra.Command{
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 
+		if err := maybePing(ctx, promClient); err != nil {
+			return err
+		}
+
 		srv := server.New(logger, promClient, server.Options{
 			RefreshInterval: viper.GetDuration("search.refresh-interval"),
 		})
@@ -33,7 +37,7 @@ var httpCmd = &cobra.Command{
 		path := viper.GetString("http.path")
 		stateless := viper.GetBool("http.stateless")
 		logger.Infof("starting prometheus-mcp in http mode on %s%s", addr, path)
-		return srv.ServeHTTP(addr, path, stateless)
+		return srv.ServeHTTP(ctx, addr, path, stateless)
 	},
 }
 

@@ -58,6 +58,7 @@ func init() {
 	rootCmd.PersistentFlags().String("basic-auth-password", "", "HTTP basic auth password for Prometheus")
 	rootCmd.PersistentFlags().Bool("tls-insecure-skip-verify", false, "Skip verification of Prometheus TLS certificates")
 	rootCmd.PersistentFlags().Duration("search-refresh-interval", 5*time.Minute, "How often to refresh the metric search index. Set to 0 to disable.")
+	rootCmd.PersistentFlags().Bool("check-connection", false, "Verify connectivity to Prometheus at startup and fail fast if unreachable")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (trace, debug, info, warn, error)")
 
 	_ = viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
@@ -66,6 +67,7 @@ func init() {
 	_ = viper.BindPFlag("basic-auth.password", rootCmd.PersistentFlags().Lookup("basic-auth-password"))
 	_ = viper.BindPFlag("tls.insecure-skip-verify", rootCmd.PersistentFlags().Lookup("tls-insecure-skip-verify"))
 	_ = viper.BindPFlag("search.refresh-interval", rootCmd.PersistentFlags().Lookup("search-refresh-interval"))
+	_ = viper.BindPFlag("check-connection", rootCmd.PersistentFlags().Lookup("check-connection"))
 	_ = viper.BindPFlag("log-level", rootCmd.PersistentFlags().Lookup("log-level"))
 }
 
