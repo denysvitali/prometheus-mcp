@@ -58,32 +58,12 @@ func (s *Server) toolTargets() (*mcp.Tool, mcp.ToolHandlerFor[targetsArgs, any])
 		payload := map[string]any{}
 		switch args.State {
 		case "active", "":
-			active, total, truncated := truncateSlice(targets.Active, limit)
-			payload["active"] = active
-			payload["active_total"] = total
-			if truncated {
-				payload["active_truncated"] = true
-			}
+			putTargets(payload, "active", targets.Active, limit)
 		case "dropped":
-			dropped, total, truncated := truncateSlice(targets.Dropped, limit)
-			payload["dropped"] = dropped
-			payload["dropped_total"] = total
-			if truncated {
-				payload["dropped_truncated"] = true
-			}
+			putTargets(payload, "dropped", targets.Dropped, limit)
 		case "all":
-			active, aTotal, aTrunc := truncateSlice(targets.Active, limit)
-			dropped, dTotal, dTrunc := truncateSlice(targets.Dropped, limit)
-			payload["active"] = active
-			payload["active_total"] = aTotal
-			payload["dropped"] = dropped
-			payload["dropped_total"] = dTotal
-			if aTrunc {
-				payload["active_truncated"] = true
-			}
-			if dTrunc {
-				payload["dropped_truncated"] = true
-			}
+			putTargets(payload, "active", targets.Active, limit)
+			putTargets(payload, "dropped", targets.Dropped, limit)
 		default:
 			return nil, nil, fmt.Errorf("invalid state %q: want 'active', 'dropped' or 'all'", args.State)
 		}
@@ -91,6 +71,18 @@ func (s *Server) toolTargets() (*mcp.Tool, mcp.ToolHandlerFor[targetsArgs, any])
 	}
 
 	return tool, handler
+}
+
+// putTargets adds a bounded target list to payload under "<state>" and
+// "<state>_total", plus "<state>_truncated" when the list was cut. The total is
+// always the pre-truncation count.
+func putTargets[T any](payload map[string]any, state string, list []T, limit int) {
+	out, total, truncated := truncateSlice(list, limit)
+	payload[state] = out
+	payload[state+"_total"] = total
+	if truncated {
+		payload[state+"_truncated"] = true
+	}
 }
 
 func (s *Server) toolAlerts() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
@@ -126,32 +118,38 @@ func (s *Server) toolRules() (*mcp.Tool, mcp.ToolHandlerFor[rulesArgs, any]) {
 	return tool, handler
 }
 
-// filterRules keeps only alerting or recording rules (per filter) and drops
-// any group left empty. The Prometheus client returns Rules as []interface{}
-// holding AlertingRule or RecordingRule values.
+// filterRules keeps only the rules matching filter ("alert" or "record") and
+// drops any group left empty.
 func filterRules(rules promv1.RulesResult, filter string) promv1.RulesResult {
 	out := promv1.RulesResult{Groups: make([]promv1.RuleGroup, 0, len(rules.Groups))}
 	for _, g := range rules.Groups {
 		kept := make(promv1.Rules, 0, len(g.Rules))
 		for _, r := range g.Rules {
-			switch r.(type) {
-			case promv1.AlertingRule, *promv1.AlertingRule:
-				if filter == "alert" {
-					kept = append(kept, r)
-				}
-			case promv1.RecordingRule, *promv1.RecordingRule:
-				if filter == "record" {
-					kept = append(kept, r)
-				}
-			default:
+			if keepRule(r, filter) {
 				kept = append(kept, r)
 			}
 		}
-		if len(kept) > 0 {
-			ng := g
-			ng.Rules = kept
-			out.Groups = append(out.Groups, ng)
+		if len(kept) == 0 {
+			continue
 		}
+		ng := g
+		ng.Rules = kept
+		out.Groups = append(out.Groups, ng)
 	}
 	return out
+}
+
+// keepRule reports whether a rule survives filter. The Prometheus client returns
+// Rules as []interface{} holding AlertingRule or RecordingRule values; a kind we
+// do not recognise is kept, because silently dropping rules the client learns
+// about before we do would hide data from the caller.
+func keepRule(r any, filter string) bool {
+	switch r.(type) {
+	case promv1.AlertingRule, *promv1.AlertingRule:
+		return filter == "alert"
+	case promv1.RecordingRule, *promv1.RecordingRule:
+		return filter == "record"
+	default:
+		return true
+	}
 }

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
 type searchArgs struct {
@@ -78,28 +77,13 @@ func (s *Server) toolQueryRange() (*mcp.Tool, mcp.ToolHandlerFor[queryRangeArgs,
 	tool := readOnlyTool("prometheus_query_range", "Evaluate a PromQL query over a time range.")
 
 	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args queryRangeArgs) (*mcp.CallToolResult, any, error) {
-		start, err := parseTimeArg(args.Start)
+		r, err := parseQueryRange(args.Start, args.End, args.Step)
 		if err != nil {
-			return nil, nil, fmt.Errorf("invalid start: %w", err)
-		}
-		end, err := parseTimeArg(args.End)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid end: %w", err)
-		}
-		step, err := time.ParseDuration(args.Step)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid step: %w", err)
-		}
-		if step <= 0 {
-			return nil, nil, fmt.Errorf("step must be a positive duration")
-		}
-		if !end.After(start) {
-			return nil, nil, fmt.Errorf("end must be after start")
+			return nil, nil, err
 		}
 		maxSeries := boundedLimit(args.MaxSeries, defaultRangeMaxSeries)
 		maxSamples := boundedLimit(args.MaxSamplesPerSeries, defaultRangeMaxSamplesPerSeries)
 
-		r := promv1.Range{Start: start, End: end, Step: step}
 		value, warnings, err := s.prom.API.QueryRange(ctx, args.Query, r, queryOptions(args.TimeoutSeconds)...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("range query failed: %w", err)

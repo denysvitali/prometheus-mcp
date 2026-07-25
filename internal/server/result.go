@@ -98,37 +98,44 @@ func shapeQueryResult(value model.Value, maxSeries, maxSamplesPerSeries int) (an
 		return out, stats
 
 	case model.Matrix:
-		stats.SeriesTotal = len(v)
-		series, _, seriesTruncated := truncateSlice(v, maxSeries)
-		samplesTotal := 0
-		samplesReturned := 0
-		samplesTruncated := false
-		out := make(model.Matrix, len(series))
-		for i, stream := range series {
-			samplesTotal += len(stream.Values)
-			kept, _, sTrunc := truncateSlice(stream.Values, maxSamplesPerSeries)
-			samplesReturned += len(kept)
-			if sTrunc {
-				samplesTruncated = true
-			}
-			cp := *stream
-			cp.Values = kept
-			out[i] = &cp
-		}
-		// Account for samples belonging to series that were dropped entirely.
-		for _, stream := range v[len(series):] {
-			samplesTotal += len(stream.Values)
-		}
-		stats.SeriesReturned = len(out)
-		stats.SamplesTotal = samplesTotal
-		stats.SamplesReturned = samplesReturned
-		stats.Truncated = seriesTruncated || samplesTruncated
-		return out, stats
+		return shapeMatrix(v, maxSeries, maxSamplesPerSeries, stats)
 
 	default:
 		// Scalar and String results are already tiny.
 		return value, stats
 	}
+}
+
+// shapeMatrix bounds a range-query result: it keeps at most maxSeries streams
+// and at most maxSamplesPerSeries samples within each kept stream. Streams are
+// copied before their samples are sliced, so the caller's value is untouched.
+func shapeMatrix(v model.Matrix, maxSeries, maxSamplesPerSeries int, stats queryStats) (any, queryStats) {
+	stats.SeriesTotal = len(v)
+	series, _, seriesTruncated := truncateSlice(v, maxSeries)
+
+	samplesTotal := 0
+	samplesReturned := 0
+	samplesTruncated := false
+	out := make(model.Matrix, len(series))
+	for i, stream := range series {
+		samplesTotal += len(stream.Values)
+		kept, _, sTrunc := truncateSlice(stream.Values, maxSamplesPerSeries)
+		samplesReturned += len(kept)
+		samplesTruncated = samplesTruncated || sTrunc
+		cp := *stream
+		cp.Values = kept
+		out[i] = &cp
+	}
+	// Account for samples belonging to series that were dropped entirely.
+	for _, stream := range v[len(series):] {
+		samplesTotal += len(stream.Values)
+	}
+
+	stats.SeriesReturned = len(out)
+	stats.SamplesTotal = samplesTotal
+	stats.SamplesReturned = samplesReturned
+	stats.Truncated = seriesTruncated || samplesTruncated
+	return out, stats
 }
 
 // queryResultWithWarnings renders a bounded query result plus stats/warnings.
@@ -172,6 +179,31 @@ func parseTimeArg(s string) (time.Time, error) {
 		return time.Unix(sec, nano).UTC(), nil
 	}
 	return time.Time{}, fmt.Errorf("unrecognized time format: %q (want RFC3339 such as 2024-01-02T03:04:05Z, or Unix seconds)", s)
+}
+
+// parseQueryRange validates the start/end/step trio of a range query: both
+// timestamps must parse, step must be a positive duration, and end must be
+// after start.
+func parseQueryRange(startStr, endStr, stepStr string) (promv1.Range, error) {
+	start, err := parseTimeArg(startStr)
+	if err != nil {
+		return promv1.Range{}, fmt.Errorf("invalid start: %w", err)
+	}
+	end, err := parseTimeArg(endStr)
+	if err != nil {
+		return promv1.Range{}, fmt.Errorf("invalid end: %w", err)
+	}
+	step, err := time.ParseDuration(stepStr)
+	if err != nil {
+		return promv1.Range{}, fmt.Errorf("invalid step: %w", err)
+	}
+	if step <= 0 {
+		return promv1.Range{}, fmt.Errorf("step must be a positive duration")
+	}
+	if !end.After(start) {
+		return promv1.Range{}, fmt.Errorf("end must be after start")
+	}
+	return promv1.Range{Start: start, End: end, Step: step}, nil
 }
 
 // parseOptionalRange parses an optional start/end pair, leaving either side as
