@@ -1,6 +1,3 @@
-// Package search implements an in-memory BM25 index over Prometheus metric
-// metadata so MCP clients can discover metrics by keyword or natural-language
-// query instead of listing every series name.
 package search
 
 import (

@@ -1,4 +1,3 @@
-// Package server builds the MCP server and registers its Prometheus tools.
 package server
 
 import (
@@ -25,6 +24,8 @@ const serverName = "prometheus-mcp"
 var Version = "dev"
 
 // Server owns the MCP server, a Prometheus client and the metric search index.
+// Construct one with New; the zero value is not usable. A Server is immutable
+// after New and safe for concurrent use.
 type Server struct {
 	logger          *logrus.Logger
 	prom            *prometheus.Client
@@ -35,10 +36,16 @@ type Server struct {
 
 // Options configures a Server.
 type Options struct {
+	// RefreshInterval is how often StartBackground rebuilds the metric search
+	// index. Zero or negative disables refreshing, which leaves
+	// prometheus_search reporting that the index is not ready.
 	RefreshInterval time.Duration
 }
 
-// New builds a Server with all Prometheus tools registered.
+// New builds a Server with every Prometheus tool registered and a middleware
+// that converts a panic in a handler into an error response. It does no I/O and
+// starts no goroutine: call StartBackground for the metric index and one of the
+// Serve methods to accept traffic.
 func New(logger *logrus.Logger, prom *prometheus.Client, opts Options) *Server {
 	mcpSrv := mcp.NewServer(&mcp.Implementation{
 		Name:    serverName,

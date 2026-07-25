@@ -28,7 +28,8 @@ type BasicAuth struct {
 	Password string
 }
 
-// Client wraps the Prometheus v1 API plus the base URL it talks to.
+// Client wraps the Prometheus v1 API plus the base URL it talks to. URL is kept
+// so errors and logs can name the server. Construct one with New.
 type Client struct {
 	API promv1.API
 	URL string

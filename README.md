@@ -38,8 +38,8 @@ and speaks MCP via the [official MCP Go SDK](https://github.com/modelcontextprot
 
 ### Metric search
 
-`prometheus_search` is a BM25 index built in-process from the `/api/v1/metadata`
-endpoint. It lets an MCP client discover relevant metrics from a keyword or
+`prometheus_search` is a BM25 index built in-process from `/api/v1/metadata` and
+the `__name__` label values. It lets an MCP client discover relevant metrics from a keyword or
 natural-language query without dumping the entire series catalogue into
 context (e.g. `"http request latency"` → `http_request_duration_seconds`).
 Partial metric-name prefixes match too (e.g. `"http_req"` →
@@ -78,6 +78,9 @@ Responses are emitted as compact (non-indented) JSON to minimise token usage.
 go install github.com/denysvitali/prometheus-mcp@latest
 ```
 
+`go install` does not stamp a version, so such a binary reports itself to MCP
+clients as `prometheus-mcp dev`. Release archives and images carry the real tag.
+
 Or build from source:
 
 ```sh
@@ -89,7 +92,7 @@ go build -o prometheus-mcp .
 ### Docker
 
 Multi-arch images (`linux/amd64`, `linux/arm64`) are published to GHCR on every
-push to `main` and for every tag:
+push to `main` (as `:latest`) and for every `v*.*.*` tag:
 
 ```sh
 docker run --rm -p 8080:8080 \
@@ -176,11 +179,35 @@ log-level: info
 
 ## Development
 
+The commands CI runs, in the order it runs them:
+
 ```sh
-go test ./...
 go vet ./...
+go test -race ./...
 go build ./...
+golangci-lint run
 ```
+
+`go test` verifies that no test leaks a goroutine (`goleak` in `TestMain`), so a
+failure there is a real shutdown bug, not a flake.
+
+### Layout
+
+```
+main.go                     entry point; delegates to cmd
+cmd/                        flags, config decoding, one file per transport
+  config.go                 every viper key -> Config, read exactly once
+  runtime.go                the startup path both transports share
+internal/prometheus/        authenticated Prometheus API client + transports
+internal/search/            BM25 metric index (index/score) + refresher
+internal/server/            MCP server; one file per group of tools
+docs/adr/                   decisions worth keeping
+```
+
+Dependencies point one way: `cmd` -> `internal/server` -> {`internal/prometheus`,
+`internal/search`}. The two inner packages know nothing about MCP, and
+`internal/search` knows nothing about Prometheus beyond the API interface it
+reads.
 
 ## License
 
