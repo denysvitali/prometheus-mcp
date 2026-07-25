@@ -11,6 +11,8 @@ import (
 // fakeAPI implements promv1.API for tests. Only the methods exercised by the
 // server tests carry behaviour; the rest return zero values.
 type fakeAPI struct {
+	// Err, when set, is returned by every method that has no dedicated hook.
+	Err              error
 	QueryFn          func(ctx context.Context, query string, ts time.Time) (model.Value, promv1.Warnings, error)
 	QueryRangeFn     func(ctx context.Context, query string, r promv1.Range) (model.Value, promv1.Warnings, error)
 	SeriesFn         func(ctx context.Context, matches []string) ([]model.LabelSet, promv1.Warnings, error)
@@ -24,20 +26,20 @@ type fakeAPI struct {
 }
 
 func (f *fakeAPI) Alerts(context.Context) (promv1.AlertsResult, error) {
-	return promv1.AlertsResult{}, nil
+	return promv1.AlertsResult{}, f.Err
 }
 func (f *fakeAPI) AlertManagers(context.Context) (promv1.AlertManagersResult, error) {
-	return promv1.AlertManagersResult{}, nil
+	return promv1.AlertManagersResult{}, f.Err
 }
 func (f *fakeAPI) CleanTombstones(context.Context) error { return nil }
 func (f *fakeAPI) Config(context.Context) (promv1.ConfigResult, error) {
-	return promv1.ConfigResult{}, nil
+	return promv1.ConfigResult{}, f.Err
 }
 func (f *fakeAPI) DeleteSeries(context.Context, []string, time.Time, time.Time) error {
 	return nil
 }
 func (f *fakeAPI) Flags(context.Context) (promv1.FlagsResult, error) {
-	return promv1.FlagsResult{}, nil
+	return promv1.FlagsResult{}, f.Err
 }
 
 func (f *fakeAPI) LabelNames(ctx context.Context, _ []string, _, _ time.Time, _ ...promv1.Option) ([]string, promv1.Warnings, error) {
@@ -76,10 +78,10 @@ func (f *fakeAPI) QueryExemplars(ctx context.Context, query string, _, _ time.Ti
 }
 
 func (f *fakeAPI) Buildinfo(context.Context) (promv1.BuildinfoResult, error) {
-	return promv1.BuildinfoResult{}, nil
+	return promv1.BuildinfoResult{}, f.Err
 }
 func (f *fakeAPI) Runtimeinfo(context.Context) (promv1.RuntimeinfoResult, error) {
-	return promv1.RuntimeinfoResult{}, nil
+	return promv1.RuntimeinfoResult{}, f.Err
 }
 
 func (f *fakeAPI) Series(ctx context.Context, matches []string, _, _ time.Time, _ ...promv1.Option) ([]model.LabelSet, promv1.Warnings, error) {
@@ -122,9 +124,9 @@ func (f *fakeAPI) TSDB(ctx context.Context, _ ...promv1.Option) (promv1.TSDBResu
 	if f.TSDBFn != nil {
 		return f.TSDBFn(ctx)
 	}
-	return promv1.TSDBResult{}, nil
+	return promv1.TSDBResult{}, f.Err
 }
 
 func (f *fakeAPI) WalReplay(context.Context) (promv1.WalReplayStatus, error) {
-	return promv1.WalReplayStatus{}, nil
+	return promv1.WalReplayStatus{}, f.Err
 }

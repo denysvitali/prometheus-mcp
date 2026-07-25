@@ -94,17 +94,9 @@ func (s *Server) toolTargets() (*mcp.Tool, mcp.ToolHandlerFor[targetsArgs, any])
 }
 
 func (s *Server) toolAlerts() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
-	tool := readOnlyTool("prometheus_alerts", "List currently firing and pending Prometheus alerts.")
-
-	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
-		alerts, err := s.prom.API.Alerts(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("alerts failed: %w", err)
-		}
-		return jsonResult(alerts)
-	}
-
-	return tool, handler
+	return fetchTool("prometheus_alerts",
+		"List currently firing and pending Prometheus alerts.",
+		"alerts", s.prom.API.Alerts)
 }
 
 type rulesArgs struct {

@@ -1,6 +1,9 @@
 package server
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -35,6 +38,25 @@ func register[In any](srv *mcp.Server, def func() (*mcp.Tool, mcp.ToolHandlerFor
 
 // noArgs is the input type for tools that take no parameters.
 type noArgs struct{}
+
+// fetchTool builds a parameterless read-only tool that renders whatever fetch
+// returns as JSON. errLabel names the operation in the error message, which
+// reads "<errLabel> failed: <cause>"; it is a separate argument because the tool
+// name and the wording of its error do not always match (prometheus_status_flags
+// reports "flags failed").
+func fetchTool[T any](
+	name, description, errLabel string,
+	fetch func(context.Context) (T, error),
+) (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
+		v, err := fetch(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s failed: %w", errLabel, err)
+		}
+		return jsonResult(v)
+	}
+	return readOnlyTool(name, description), handler
+}
 
 // readOnlyTool builds a tool definition annotated as a non-destructive,
 // open-world read. Every tool in this server only reads from Prometheus.
