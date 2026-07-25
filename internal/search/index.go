@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,15 +29,26 @@ type Hit struct {
 	Score  float64 `json:"score"`
 }
 
-// Index is a concurrent BM25 inverted index over metric metadata documents.
+// Index is a BM25 inverted index over metric metadata documents.
+//
+// Concurrency: an Index holds a pointer to one immutable snapshot. Build builds
+// a fresh snapshot off to the side and installs it with a single atomic store,
+// and every reader loads the pointer once and then works on data that cannot
+// change underneath it. There is therefore no lock, no lock ordering to reason
+// about, and no way to observe a half-built index. An Index is safe to use from
+// any goroutine; the zero value is not usable, call NewIndex.
 type Index struct {
-	mu        sync.RWMutex
+	current atomic.Pointer[snapshot]
+}
+
+// snapshot is one generation of the index. Every field is written exactly once,
+// by newSnapshot, and is read-only from then on.
+type snapshot struct {
 	docs      []Document
 	docLen    []int
 	avgDocLen float64
 	postings  map[string][]posting
 	docFreq   map[string]int
-	total     int
 	updatedAt time.Time
 }
 
@@ -46,9 +57,12 @@ type posting struct {
 	tf    int
 }
 
-// NewIndex returns an empty Index.
+// NewIndex returns an empty Index that is ready to search (returning no hits)
+// before the first Build.
 func NewIndex() *Index {
-	return &Index{postings: map[string][]posting{}, docFreq: map[string]int{}}
+	idx := &Index{}
+	idx.current.Store(&snapshot{postings: map[string][]posting{}, docFreq: map[string]int{}})
+	return idx
 }
 
 var (
@@ -60,6 +74,8 @@ func tokenize(s string) []string {
 	s = camelSplit.ReplaceAllString(s, "$1 $2")
 	s = strings.ToLower(s)
 	parts := tokenSplit.Split(s, -1)
+	// Filter in place: parts is a fresh slice owned by this call, so reusing its
+	// backing array avoids a second allocation per tokenized string.
 	out := parts[:0]
 	for _, p := range parts {
 		if p != "" {
@@ -69,9 +85,16 @@ func tokenize(s string) []string {
 	return out
 }
 
-// Build replaces the current index contents with the provided documents.
-// The metric name is weighted twice to bias ranking toward name matches.
+// Build replaces the current index contents with the provided documents. It
+// takes ownership of docs, which must not be mutated afterwards. Searches
+// running concurrently keep serving the previous contents until Build returns.
 func (idx *Index) Build(docs []Document) {
+	idx.current.Store(newSnapshot(docs))
+}
+
+// newSnapshot indexes docs. The metric name is weighted twice to bias ranking
+// toward name matches.
+func newSnapshot(docs []Document) *snapshot {
 	postings := map[string][]posting{}
 	docFreq := map[string]int{}
 	docLen := make([]int, len(docs))
@@ -106,15 +129,14 @@ func (idx *Index) Build(docs []Document) {
 		avg = float64(totalLen) / float64(len(docs))
 	}
 
-	idx.mu.Lock()
-	idx.docs = docs
-	idx.postings = postings
-	idx.docFreq = docFreq
-	idx.docLen = docLen
-	idx.avgDocLen = avg
-	idx.total = len(docs)
-	idx.updatedAt = time.Now()
-	idx.mu.Unlock()
+	return &snapshot{
+		docs:      docs,
+		postings:  postings,
+		docFreq:   docFreq,
+		docLen:    docLen,
+		avgDocLen: avg,
+		updatedAt: time.Now(),
+	}
 }
 
 const (
@@ -130,10 +152,11 @@ const (
 // series. An optional typeFilter restricts hits to a metric type. A
 // non-positive limit returns every scored document.
 func (idx *Index) Search(query string, limit int, typeFilter string) []Hit {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
+	return idx.current.Load().search(query, limit, typeFilter)
+}
 
-	if idx.total == 0 {
+func (s *snapshot) search(query string, limit int, typeFilter string) []Hit {
+	if len(s.docs) == 0 {
 		return nil
 	}
 	tokens := tokenize(query)
@@ -144,7 +167,7 @@ func (idx *Index) Search(query string, limit int, typeFilter string) []Hit {
 
 	scores := make(map[int]float64, 64)
 	for _, t := range tokens {
-		idx.scoreTerm(t, scores)
+		s.scoreTerm(t, scores)
 	}
 
 	// Boost documents whose metric name contains the full query as a
@@ -152,7 +175,7 @@ func (idx *Index) Search(query string, limit int, typeFilter string) []Hit {
 	qLower := strings.ToLower(strings.TrimSpace(query))
 	if qLower != "" {
 		for id := range scores {
-			if strings.Contains(strings.ToLower(idx.docs[id].Metric), qLower) {
+			if strings.Contains(strings.ToLower(s.docs[id].Metric), qLower) {
 				scores[id] *= 1.5
 			}
 		}
@@ -163,7 +186,7 @@ func (idx *Index) Search(query string, limit int, typeFilter string) []Hit {
 		if sc <= 0 {
 			continue
 		}
-		if typeFilter != "" && !strings.EqualFold(idx.docs[id].Type, typeFilter) {
+		if typeFilter != "" && !strings.EqualFold(s.docs[id].Type, typeFilter) {
 			continue
 		}
 		ids = append(ids, id)
@@ -172,7 +195,7 @@ func (idx *Index) Search(query string, limit int, typeFilter string) []Hit {
 		if scores[ids[i]] != scores[ids[j]] {
 			return scores[ids[i]] > scores[ids[j]]
 		}
-		return idx.docs[ids[i]].Metric < idx.docs[ids[j]].Metric
+		return s.docs[ids[i]].Metric < s.docs[ids[j]].Metric
 	})
 
 	if limit <= 0 || limit > len(ids) {
@@ -180,7 +203,7 @@ func (idx *Index) Search(query string, limit int, typeFilter string) []Hit {
 	}
 	hits := make([]Hit, limit)
 	for i := 0; i < limit; i++ {
-		d := idx.docs[ids[i]]
+		d := s.docs[ids[i]]
 		hits[i] = Hit{
 			Metric: d.Metric,
 			Type:   d.Type,
@@ -196,9 +219,9 @@ func (idx *Index) Search(query string, limit int, typeFilter string) []Hit {
 // Exact term matches are weighted fully; terms that merely share the token as
 // a prefix (and the token is at least 2 runes) contribute at a discount so
 // exact matches outrank prefix-only matches.
-func (idx *Index) scoreTerm(token string, scores map[int]float64) {
-	n := float64(idx.total)
-	for term, df := range idx.docFreq {
+func (s *snapshot) scoreTerm(token string, scores map[int]float64) {
+	n := float64(len(s.docs))
+	for term, df := range s.docFreq {
 		weight := 1.0
 		if term != token {
 			if len(token) < 2 || !strings.HasPrefix(term, token) {
@@ -207,10 +230,10 @@ func (idx *Index) scoreTerm(token string, scores map[int]float64) {
 			weight = prefixWeight
 		}
 		idf := math.Log(1 + (n-float64(df)+0.5)/(float64(df)+0.5))
-		for _, p := range idx.postings[term] {
+		for _, p := range s.postings[term] {
 			tf := float64(p.tf)
-			docLen := float64(idx.docLen[p.docID])
-			denom := tf + bm25K1*(1-bm25B+bm25B*docLen/idx.avgDocLen)
+			docLen := float64(s.docLen[p.docID])
+			denom := tf + bm25K1*(1-bm25B+bm25B*docLen/s.avgDocLen)
 			scores[p.docID] += weight * idf * (tf * (bm25K1 + 1)) / denom
 		}
 	}
@@ -218,14 +241,11 @@ func (idx *Index) scoreTerm(token string, scores map[int]float64) {
 
 // Size reports the number of documents currently indexed.
 func (idx *Index) Size() int {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.total
+	return len(idx.current.Load().docs)
 }
 
-// UpdatedAt reports when the index was last rebuilt.
+// UpdatedAt reports when the index was last rebuilt, or the zero time if Build
+// has never run.
 func (idx *Index) UpdatedAt() time.Time {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	return idx.updatedAt
+	return idx.current.Load().updatedAt
 }
