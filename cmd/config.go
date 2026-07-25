@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/denysvitali/prometheus-mcp/internal/prometheus"
+	"github.com/denysvitali/prometheus-mcp/internal/server"
 )
 
 // Config is the resolved configuration of one prometheus-mcp run. It is read
@@ -13,21 +14,13 @@ import (
 // global configuration state.
 type Config struct {
 	Prometheus prometheus.Config
-	HTTP       HTTPConfig
+	HTTP       server.HTTPOptions
 
 	// RefreshInterval is how often the metric search index is rebuilt.
 	// Zero or negative disables refreshing.
 	RefreshInterval time.Duration
 	// CheckConnection makes startup fail fast when Prometheus is unreachable.
 	CheckConnection bool
-}
-
-// HTTPConfig configures the streamable HTTP transport. It is ignored by the
-// stdio command.
-type HTTPConfig struct {
-	ListenAddress string
-	Path          string
-	Stateless     bool
 }
 
 // loadConfig collects every configuration value the server needs. The keys are
@@ -44,7 +37,8 @@ func loadConfig(v *viper.Viper) Config {
 			},
 			InsecureSkipVerify: v.GetBool("tls.insecure-skip-verify"),
 		},
-		HTTP: HTTPConfig{
+		// HTTP is ignored by the stdio command.
+		HTTP: server.HTTPOptions{
 			ListenAddress: v.GetString("http.listen-address"),
 			Path:          v.GetString("http.path"),
 			Stateless:     v.GetBool("http.stateless"),

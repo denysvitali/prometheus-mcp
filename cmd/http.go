@@ -15,7 +15,7 @@ var httpCmd = &cobra.Command{
 	RunE: func(_ *cobra.Command, _ []string) error {
 		return run(func(ctx context.Context, srv *server.Server, cfg Config) error {
 			logger.Infof("starting prometheus-mcp in http mode on %s%s", cfg.HTTP.ListenAddress, cfg.HTTP.Path)
-			return srv.ServeHTTP(ctx, cfg.HTTP.ListenAddress, cfg.HTTP.Path, cfg.HTTP.Stateless)
+			return srv.ServeHTTP(ctx, cfg.HTTP)
 		})
 	},
 }

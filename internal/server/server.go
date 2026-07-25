@@ -115,19 +115,30 @@ func (s *Server) ServeStdio(ctx context.Context) error {
 	return s.mcp.Run(ctx, &mcp.StdioTransport{})
 }
 
+// HTTPOptions configures the streamable HTTP transport.
+type HTTPOptions struct {
+	// ListenAddress is the host:port to bind, e.g. ":8080".
+	ListenAddress string
+	// Path is the HTTP path that serves MCP requests, e.g. "/mcp".
+	Path string
+	// Stateless serves every request without server-side session state, for
+	// load-balanced deployments that cannot maintain sticky sessions.
+	Stateless bool
+}
+
 // ServeHTTP serves MCP over the streamable HTTP transport. It blocks until the
 // server exits; when ctx is cancelled it gracefully shuts down, draining
 // in-flight requests for up to shutdownTimeout.
-func (s *Server) ServeHTTP(ctx context.Context, addr, path string, stateless bool) error {
+func (s *Server) ServeHTTP(ctx context.Context, opts HTTPOptions) error {
 	handler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return s.mcp },
-		&mcp.StreamableHTTPOptions{Stateless: stateless},
+		&mcp.StreamableHTTPOptions{Stateless: opts.Stateless},
 	)
 
 	mux := http.NewServeMux()
-	mux.Handle(path, handler)
+	mux.Handle(opts.Path, handler)
 	httpSrv := &http.Server{
-		Addr:              addr,
+		Addr:              opts.ListenAddress,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
