@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"testing"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -76,5 +77,46 @@ func TestEnvVarsOverrideDefaults(t *testing.T) {
 				t.Errorf("%s did not reach viper key %q (got %q)", b.envVar, b.viperKey, got)
 			}
 		})
+	}
+}
+
+// TestLoadConfigReadsEveryDocumentedKey pins the viper key each Config field is
+// read from: a typo in one of those strings is otherwise invisible until a user
+// reports that their setting is ignored.
+func TestLoadConfigReadsEveryDocumentedKey(t *testing.T) {
+	v := viper.New()
+	v.Set("url", "http://prom.example:9090")
+	v.Set("bearer-token", "token")
+	v.Set("basic-auth.username", "alice")
+	v.Set("basic-auth.password", "hunter2")
+	v.Set("tls.insecure-skip-verify", true)
+	v.Set("http.listen-address", ":9999")
+	v.Set("http.path", "/custom")
+	v.Set("http.stateless", true)
+	v.Set("search.refresh-interval", "90s")
+	v.Set("check-connection", true)
+
+	cfg := loadConfig(v)
+
+	if cfg.Prometheus.URL != "http://prom.example:9090" {
+		t.Errorf("URL = %q", cfg.Prometheus.URL)
+	}
+	if cfg.Prometheus.BearerToken != "token" {
+		t.Errorf("BearerToken = %q", cfg.Prometheus.BearerToken)
+	}
+	if cfg.Prometheus.BasicAuth.Username != "alice" || cfg.Prometheus.BasicAuth.Password != "hunter2" {
+		t.Errorf("BasicAuth = %+v", cfg.Prometheus.BasicAuth)
+	}
+	if !cfg.Prometheus.InsecureSkipVerify {
+		t.Error("InsecureSkipVerify = false, want true")
+	}
+	if cfg.HTTP.ListenAddress != ":9999" || cfg.HTTP.Path != "/custom" || !cfg.HTTP.Stateless {
+		t.Errorf("HTTP = %+v", cfg.HTTP)
+	}
+	if cfg.RefreshInterval != 90*time.Second {
+		t.Errorf("RefreshInterval = %s, want 1m30s", cfg.RefreshInterval)
+	}
+	if !cfg.CheckConnection {
+		t.Error("CheckConnection = false, want true")
 	}
 }

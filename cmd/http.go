@@ -2,14 +2,10 @@ package cmd
 
 import (
 	"context"
-	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/denysvitali/prometheus-mcp/internal/prometheus"
 	"github.com/denysvitali/prometheus-mcp/internal/server"
 )
 
@@ -17,35 +13,10 @@ var httpCmd = &cobra.Command{
 	Use:   "http",
 	Short: "Run the MCP server over streamable HTTP",
 	RunE: func(_ *cobra.Command, _ []string) error {
-		promClient, err := prometheus.NewFromViper(viper.GetViper())
-		if err != nil {
-			return err
-		}
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
-
-		if err := maybePing(ctx, promClient); err != nil {
-			return err
-		}
-
-		srv := server.New(logger, promClient, server.Options{
-			RefreshInterval: viper.GetDuration("search.refresh-interval"),
+		return run(func(ctx context.Context, srv *server.Server, cfg Config) error {
+			logger.Infof("starting prometheus-mcp in http mode on %s%s", cfg.HTTP.ListenAddress, cfg.HTTP.Path)
+			return srv.ServeHTTP(ctx, cfg.HTTP.ListenAddress, cfg.HTTP.Path, cfg.HTTP.Stateless)
 		})
-		waitRefresher, err := srv.StartBackground(ctx)
-		if err != nil {
-			return err
-		}
-
-		addr := viper.GetString("http.listen-address")
-		path := viper.GetString("http.path")
-		stateless := viper.GetBool("http.stateless")
-		logger.Infof("starting prometheus-mcp in http mode on %s%s", addr, path)
-		serveErr := srv.ServeHTTP(ctx, addr, path, stateless)
-		// Stop the refresher even when the transport returned on its own, then
-		// wait for it, so the process never exits with work in flight.
-		cancel()
-		waitRefresher()
-		return serveErr
 	},
 }
 
