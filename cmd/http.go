@@ -31,13 +31,21 @@ var httpCmd = &cobra.Command{
 		srv := server.New(logger, promClient, server.Options{
 			RefreshInterval: viper.GetDuration("search.refresh-interval"),
 		})
-		srv.StartBackground(ctx)
+		waitRefresher, err := srv.StartBackground(ctx)
+		if err != nil {
+			return err
+		}
 
 		addr := viper.GetString("http.listen-address")
 		path := viper.GetString("http.path")
 		stateless := viper.GetBool("http.stateless")
 		logger.Infof("starting prometheus-mcp in http mode on %s%s", addr, path)
-		return srv.ServeHTTP(ctx, addr, path, stateless)
+		serveErr := srv.ServeHTTP(ctx, addr, path, stateless)
+		// Stop the refresher even when the transport returned on its own, then
+		// wait for it, so the process never exits with work in flight.
+		cancel()
+		waitRefresher()
+		return serveErr
 	},
 }
 

@@ -71,20 +71,35 @@ func (s *Server) recoverMiddleware(next mcp.MethodHandler) mcp.MethodHandler {
 	}
 }
 
-// StartBackground launches the metric-index refresher if enabled. The
-// goroutine stops when ctx is cancelled.
-func (s *Server) StartBackground(ctx context.Context) {
+// StartBackground launches the metric-index refresher if enabled and returns a
+// function that blocks until the refresher goroutine has exited. Cancel ctx to
+// stop it, then call the returned function; it is safe to call more than once,
+// and returns immediately when refreshing is disabled.
+//
+// It returns an error only if the refresher is misconfigured, which is a
+// startup-time bug rather than a runtime condition.
+func (s *Server) StartBackground(ctx context.Context) (wait func(), err error) {
 	if s.refreshInterval <= 0 {
 		s.logger.Debug("metric index refresh disabled")
-		return
+		return func() {}, nil
 	}
-	refresher := &search.Refresher{
+
+	refresher, err := search.NewRefresher(search.RefresherConfig{
 		API:      s.prom.API,
 		Index:    s.index,
 		Interval: s.refreshInterval,
 		Logger:   s.logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("starting metric index refresher: %w", err)
 	}
-	go refresher.Run(ctx)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		refresher.Run(ctx)
+	}()
+	return func() { <-done }, nil
 }
 
 // ServeStdio serves MCP over standard input/output. It returns when ctx is

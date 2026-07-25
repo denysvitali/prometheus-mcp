@@ -31,9 +31,17 @@ var stdioCmd = &cobra.Command{
 		srv := server.New(logger, promClient, server.Options{
 			RefreshInterval: viper.GetDuration("search.refresh-interval"),
 		})
-		srv.StartBackground(ctx)
+		waitRefresher, err := srv.StartBackground(ctx)
+		if err != nil {
+			return err
+		}
 		logger.Info("starting prometheus-mcp in stdio mode")
-		return srv.ServeStdio(ctx)
+		serveErr := srv.ServeStdio(ctx)
+		// Stop the refresher even when the transport returned on its own, then
+		// wait for it, so the process never exits with work in flight.
+		cancel()
+		waitRefresher()
+		return serveErr
 	},
 }
 

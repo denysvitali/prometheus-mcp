@@ -39,10 +39,15 @@ func (f *refreshFake) LabelValues(_ context.Context, label string, _ []string, _
 	return out, nil, nil
 }
 
-func newTestRefresher(api promv1.API, idx *Index) *Refresher {
+func newTestRefresher(t *testing.T, api promv1.API, idx *Index) *Refresher {
+	t.Helper()
 	logger := logrus.New()
 	logger.SetOutput(io.Discard)
-	return &Refresher{API: api, Index: idx, Interval: time.Minute, Logger: logger}
+	r, err := NewRefresher(RefresherConfig{API: api, Index: idx, Interval: time.Minute, Logger: logger})
+	if err != nil {
+		t.Fatalf("NewRefresher: %v", err)
+	}
+	return r
 }
 
 func TestRefreshIndexesMetadataAndFallbackNames(t *testing.T) {
@@ -54,7 +59,7 @@ func TestRefreshIndexesMetadataAndFallbackNames(t *testing.T) {
 		names: []string{"http_requests_total", "custom_metric_without_help"},
 	}
 	idx := NewIndex()
-	newTestRefresher(api, idx).refreshOnce(context.Background())
+	newTestRefresher(t, api, idx).refreshOnce(context.Background())
 
 	if idx.Size() != 2 {
 		t.Fatalf("index size = %d, want 2", idx.Size())
@@ -73,7 +78,7 @@ func TestRefreshToleratesFallbackFailure(t *testing.T) {
 		namesErr: errors.New("label values unavailable"),
 	}
 	idx := NewIndex()
-	newTestRefresher(api, idx).refreshOnce(context.Background())
+	newTestRefresher(t, api, idx).refreshOnce(context.Background())
 
 	if idx.Size() != 1 {
 		t.Fatalf("index size = %d, want 1 (metadata only)", idx.Size())
