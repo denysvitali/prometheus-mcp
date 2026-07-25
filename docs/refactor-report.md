@@ -48,7 +48,7 @@ round-trips, and the HTTP transport answers `POST /mcp` with 200 and drains on
 SIGTERM.
 
 **One bug found and fixed separately.** `parseTimeArg` accepted a numeric
-*prefix*, so `"2024-01-02"` silently became 1970 (`FINDINGS.md` #1). Behaviour
+*prefix*, so `"2024-01-02"` silently became 1970. Behaviour
 was pinned in the `test:` commit, then flipped in a standalone `fix:` commit.
 
 **Footguns removed.**
@@ -100,9 +100,11 @@ All three are `internal/` packages, so every caller is in this repository.
 
 ## Bugs found but not fixed
 
-None outstanding. `FINDINGS.md` #1 was fixed in its own commit; #2 (the
-`Refresher` zero value) was unreachable in practice and was addressed by the
-constructor rather than a `fix:`.
+None outstanding. The `parseTimeArg` prefix-parsing bug was fixed in its own
+`fix:` commit. The other finding -- `search.Refresher`'s zero value panicking in
+`time.NewTicker` -- was unreachable in practice (its only caller guarded the
+interval), so it was addressed by the validating constructor rather than a
+`fix:`.
 
 Two observations that are not bugs and were deliberately left alone:
 

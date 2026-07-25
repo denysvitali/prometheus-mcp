@@ -47,7 +47,7 @@ reader real effort, **L** = polish.
 
 | path:line | issue | category | sev | proposed action | risk | est. size |
 | --- | --- | --- | --- | --- | --- | --- |
-| `internal/server/result.go:158` | `parseTimeArg` falls back to `fmt.Sscanf(s, "%f", …)`, which accepts a *prefix*. `"2024-01-02"` and `"2024-01-02T03:04:05"` (no zone) silently become `1970-01-01T00:33:44Z`; `"5abc"` becomes 5s past the epoch. A user asking for a query at a plausible-looking timestamp gets 1970 data with no error. | footgun (bug) | **H** | Reported in `FINDINGS.md`; fix separately with `strconv.ParseFloat` (whole-string) in a `fix:` commit + table test | low, but it is a **behaviour change** so it must not ride along with a refactor | S |
+| `internal/server/result.go:158` | `parseTimeArg` falls back to `fmt.Sscanf(s, "%f", …)`, which accepts a *prefix*. `"2024-01-02"` and `"2024-01-02T03:04:05"` (no zone) silently become `1970-01-01T00:33:44Z`; `"5abc"` becomes 5s past the epoch. A user asking for a query at a plausible-looking timestamp gets 1970 data with no error. | footgun (bug) | **H** | Fix separately with `strconv.ParseFloat` (whole-string) in a `fix:` commit + table test | low, but it is a **behaviour change** so it must not ride along with a refactor | S |
 | `internal/search/refresh.go:16` | `Refresher` is an exported struct whose zero value is invalid: `Run` calls `time.NewTicker(r.Interval)` which **panics** on `Interval <= 0`, and `refreshOnce` nil-derefs `Logger`. Today only `server.StartBackground` constructs it and happens to guard the interval. | footgun | **H** | Unexport the fields behind `NewRefresher(cfg RefresherConfig) (*Refresher, error)` that validates interval/logger/API/index; keep defaults for `Timeout`/`Lookback` | low — one caller | S |
 | `internal/server/server.go:76,87` | `StartBackground` starts a goroutine with no way to wait for its exit and no error path — `go` statement without a shutdown handle (§7.6). Process exit currently masks it; a test cannot observe a clean stop and `goleak` would flag it. | concurrency | **H** | Return a `func()`/`Wait` handle (or an `errgroup`) from `StartBackground`; have `Refresher.Run` close a `done` channel on exit. **BREAKING** (exported signature) | low; both callers are in `cmd/` | S |
 | `internal/server/tools.go:336–537` | Eight no-arg tools (`alerts`, `tsdb_status`, `alertmanagers`, `wal_replay`, `status_config`, `status_flags`, `buildinfo`, `runtimeinfo`) are byte-for-byte identical mechanics varying only name, description and the API method — this is the entire `dupl` report (6 clone groups). ~110 lines encoding one rule eight times. | duplication (structural boilerplate) | **H** | One generic helper `simpleTool[T](name, desc string, fetch func(context.Context) (T, error))`; each tool becomes a 3-line registration | low — same output shape, covered by the session test | S |
@@ -113,7 +113,6 @@ reader real effort, **L** = polish.
 + docs/refactor-audit.md
 + docs/refactor-report.md
 + docs/adr/0001-snapshot-index-instead-of-rwmutex.md
-+ FINDINGS.md
 ```
 
 Dependency direction is already one-way (`cmd` → `server` → {`prometheus`,
@@ -210,7 +209,7 @@ every refactor diff below is reviewable in isolation.
 
 - `fix:` `parseTimeArg` whole-string numeric parsing. Recommend landing this
   **after** commit 1 (which pins the current behaviour) and **before** the rest,
-  so the flip is a two-file diff. Details in `FINDINGS.md`.
+  so the flip is a two-file diff.
 
 ### `BREAKING:`
 

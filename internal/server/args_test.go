@@ -38,7 +38,8 @@ func TestParseTimeArg(t *testing.T) {
 			wantErr: true,
 		},
 		// Inputs that look like timestamps but are not valid RFC3339 must be
-		// rejected rather than read as a numeric prefix. See FINDINGS.md #1.
+		// rejected rather than read as a numeric prefix: fmt.Sscanf("%f") used
+		// to accept the "2024" prefix and silently return 1970.
 		{
 			name:    "date only",
 			input:   "2024-01-02",
