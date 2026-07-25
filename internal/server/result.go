@@ -92,10 +92,9 @@ func shapeQueryResult(value model.Value, maxSeries, maxSamplesPerSeries int) (an
 	switch v := value.(type) {
 	case model.Vector:
 		stats.SeriesTotal = len(v)
-		out, total, truncated := truncateSlice(v, maxSeries)
+		out, _, truncated := truncateSlice(v, maxSeries)
 		stats.SeriesReturned = len(out)
 		stats.Truncated = truncated
-		_ = total
 		return out, stats
 
 	case model.Matrix:

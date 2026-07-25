@@ -12,9 +12,8 @@ import (
 )
 
 var (
-	cfgFile  string
-	logger   = logrus.New()
-	logLevel string
+	cfgFile string
+	logger  = logrus.New()
 )
 
 var rootCmd = &cobra.Command{
@@ -59,7 +58,7 @@ func init() {
 	rootCmd.PersistentFlags().Bool("tls-insecure-skip-verify", false, "Skip verification of Prometheus TLS certificates")
 	rootCmd.PersistentFlags().Duration("search-refresh-interval", 5*time.Minute, "How often to refresh the metric search index. Set to 0 to disable.")
 	rootCmd.PersistentFlags().Bool("check-connection", false, "Verify connectivity to Prometheus at startup and fail fast if unreachable")
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "info", "Log level (trace, debug, info, warn, error)")
+	rootCmd.PersistentFlags().String("log-level", "info", "Log level (trace, debug, info, warn, error)")
 
 	_ = viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
 	_ = viper.BindPFlag("bearer-token", rootCmd.PersistentFlags().Lookup("bearer-token"))
