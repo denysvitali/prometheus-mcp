@@ -37,24 +37,22 @@ func TestParseTimeArg(t *testing.T) {
 			input:   "not-a-time",
 			wantErr: true,
 		},
-		// Characterization of today's behaviour: the numeric fallback uses
-		// fmt.Sscanf("%f"), which accepts a numeric *prefix*, so these inputs
-		// are silently read as Unix seconds instead of being rejected.
-		// See FINDINGS.md #1.
+		// Inputs that look like timestamps but are not valid RFC3339 must be
+		// rejected rather than read as a numeric prefix. See FINDINGS.md #1.
 		{
-			name:  "date only is read as a numeric prefix",
-			input: "2024-01-02",
-			want:  time.Unix(2024, 0).UTC(),
+			name:    "date only",
+			input:   "2024-01-02",
+			wantErr: true,
 		},
 		{
-			name:  "rfc3339 without a zone is read as a numeric prefix",
-			input: "2024-01-02T03:04:05",
-			want:  time.Unix(2024, 0).UTC(),
+			name:    "rfc3339 without a zone",
+			input:   "2024-01-02T03:04:05",
+			wantErr: true,
 		},
 		{
-			name:  "trailing garbage after a number is ignored",
-			input: "5abc",
-			want:  time.Unix(5, 0).UTC(),
+			name:    "trailing garbage after a number",
+			input:   "5abc",
+			wantErr: true,
 		},
 	}
 

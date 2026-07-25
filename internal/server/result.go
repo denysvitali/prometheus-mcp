@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -155,6 +156,10 @@ func queryOptions(timeoutSeconds *float64) []promv1.Option {
 
 // parseTimeArg accepts RFC3339 (with or without nanoseconds) or Unix seconds
 // (integer or fractional). An empty string resolves to now.
+//
+// The numeric fallback requires the whole string to be a number:
+// strconv.ParseFloat rejects "2024-01-02", where fmt.Sscanf("%f") would have
+// accepted the "2024" prefix and silently returned 1970.
 func parseTimeArg(s string) (time.Time, error) {
 	if s == "" {
 		return time.Now(), nil
@@ -162,13 +167,12 @@ func parseTimeArg(s string) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t, nil
 	}
-	var seconds float64
-	if _, err := fmt.Sscanf(s, "%f", &seconds); err == nil {
+	if seconds, err := strconv.ParseFloat(s, 64); err == nil {
 		sec := int64(seconds)
 		nano := int64((seconds - float64(sec)) * 1e9)
 		return time.Unix(sec, nano).UTC(), nil
 	}
-	return time.Time{}, fmt.Errorf("unrecognized time format: %q (want RFC3339 or Unix seconds)", s)
+	return time.Time{}, fmt.Errorf("unrecognized time format: %q (want RFC3339 such as 2024-01-02T03:04:05Z, or Unix seconds)", s)
 }
 
 // parseOptionalRange parses an optional start/end pair, leaving either side as
