@@ -6,9 +6,52 @@ run:
 linters:
   default: standard
   enable:
-    - misspell
-    - unconvert
+    # correctness
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - errorlint
     - gocritic
+    - makezero
+    - nilerr
+    - noctx
+    - unconvert
+    # complexity budget: the thresholds this codebase was refactored to meet
+    - dupl
+    - funlen
+    - gocognit
+    - gocyclo
+    - nestif
+    # tests
+    - thelper
+    - tparallel
+    # hygiene
+    - misspell
+    - revive
+
+  settings:
+    dupl:
+      threshold: 100
+    funlen:
+      lines: 60
+      statements: 40
+    gocognit:
+      min-complexity: 15
+    gocyclo:
+      min-complexity: 12
+    nestif:
+      min-complexity: 4
+
+  exclusions:
+    rules:
+      # Table-driven tests are long by nature and their setup blocks repeat on
+      # purpose. The production thresholds above are what this config protects.
+      - path: _test\.go$
+        linters:
+          - dupl
+          - funlen
+          - gocognit
+          - gocyclo
 
 formatters:
   enable:

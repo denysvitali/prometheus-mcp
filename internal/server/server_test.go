@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -12,8 +11,9 @@ import (
 
 // connect wires a client to s over an in-memory transport and returns the
 // client session. Both sessions are closed when the test ends.
-func connect(t *testing.T, ctx context.Context, s *Server) *mcp.ClientSession {
+func connect(t *testing.T, s *Server) *mcp.ClientSession {
 	t.Helper()
+	ctx := t.Context()
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
 
 	serverSession, err := s.mcp.Connect(ctx, serverTransport, nil)
@@ -46,8 +46,8 @@ func TestSessionListsAndCallsTools(t *testing.T) {
 	s := newTestServer(&fakeAPI{})
 	s.index.Build([]search.Document{{Metric: "http_requests_total", Type: "counter", Help: "Total requests."}})
 
-	ctx := context.Background()
-	session := connect(t, ctx, s)
+	ctx := t.Context()
+	session := connect(t, s)
 
 	tools, err := session.ListTools(ctx, nil)
 	if err != nil {
@@ -92,8 +92,8 @@ func TestSessionListsAndCallsTools(t *testing.T) {
 func TestSessionRejectsMissingRequiredArgument(t *testing.T) {
 	s := newTestServer(&fakeAPI{})
 
-	ctx := context.Background()
-	session := connect(t, ctx, s)
+	ctx := t.Context()
+	session := connect(t, s)
 
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      "prometheus_query",

@@ -156,9 +156,12 @@ func (s *Server) ServeHTTP(ctx context.Context, opts HTTPOptions) error {
 		return err
 	case <-ctx.Done():
 		s.logger.Info("shutting down http server")
+		// Deliberately detached from ctx: ctx is already cancelled, and the
+		// point of this context is to give in-flight requests shutdownTimeout
+		// to finish draining.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
+		if err := httpSrv.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck // see above
 			return fmt.Errorf("graceful shutdown: %w", err)
 		}
 		// ListenAndServe returns http.ErrServerClosed after a clean Shutdown.

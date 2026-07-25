@@ -28,7 +28,7 @@ Two transports are supported:
   - stdio: for local integrations (e.g. Claude Desktop, editors)
   - http:  streamable HTTP transport suitable for remote use`,
 	SilenceUsage: true,
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+	PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
 		lvl, err := logrus.ParseLevel(viper.GetString("log-level"))
 		if err != nil {
 			return fmt.Errorf("invalid log level %q: %w", viper.GetString("log-level"), err)
@@ -41,6 +41,8 @@ Two transports are supported:
 	},
 }
 
+// Execute runs the command line and exits the process with status 1 if it
+// fails; cobra has already reported the error.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

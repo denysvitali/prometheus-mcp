@@ -24,6 +24,7 @@ func TestNewRefresherRejectsIncompleteConfig(t *testing.T) {
 		Logger:   discardLogger(),
 	}
 
+	// Each case removes exactly one required field from a valid config.
 	tests := map[string]func(*RefresherConfig){
 		"no api":            func(c *RefresherConfig) { c.API = nil },
 		"no index":          func(c *RefresherConfig) { c.Index = nil },
@@ -32,10 +33,10 @@ func TestNewRefresherRejectsIncompleteConfig(t *testing.T) {
 		"negative interval": func(c *RefresherConfig) { c.Interval = -time.Second },
 	}
 
-	for name, break_ := range tests {
+	for name, invalidate := range tests {
 		t.Run(name, func(t *testing.T) {
 			cfg := valid
-			break_(&cfg)
+			invalidate(&cfg)
 			if _, err := NewRefresher(cfg); err == nil {
 				t.Error("expected an error, got nil")
 			}

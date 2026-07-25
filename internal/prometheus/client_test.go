@@ -63,7 +63,7 @@ func TestBasicAuth(t *testing.T) {
 }
 
 func TestTLSInsecureSkipVerify(t *testing.T) {
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(buildInfoOK))
 	}))

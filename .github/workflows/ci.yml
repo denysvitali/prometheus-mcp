@@ -20,6 +20,12 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build -v ./...
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
 
   lint:
     runs-on: ubuntu-latest
