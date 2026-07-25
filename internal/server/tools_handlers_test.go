@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 	"github.com/sirupsen/logrus"
@@ -22,30 +22,38 @@ func newTestServer(api promv1.API) *Server {
 	return New(logger, &prometheus.Client{API: api, URL: "http://test"}, Options{})
 }
 
-// call invokes a tool handler and returns the decoded JSON payload plus the
-// raw result (for IsError inspection).
-func call(t *testing.T, handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error), args map[string]any) (map[string]any, *mcp.CallToolResult) {
+// call invokes a tool handler with typed arguments and returns the decoded JSON
+// payload. A handler error is reported to the caller rather than failing the
+// test, since several tests assert on failure paths. When the SDK serves these
+// handlers it converts such an error into a CallToolResult with IsError set.
+func call[In any](t *testing.T, handler mcp.ToolHandlerFor[In, any], args In) (map[string]any, error) {
 	t.Helper()
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = args
-	res, err := handler(context.Background(), req)
+	res, _, err := handler(context.Background(), &mcp.CallToolRequest{}, args)
 	if err != nil {
-		t.Fatalf("handler returned error: %v", err)
+		return nil, err
 	}
-	if len(res.Content) == 0 {
+	if res == nil || len(res.Content) == 0 {
 		t.Fatalf("result has no content")
 	}
-	text := res.Content[0].(mcp.TextContent).Text
-	if res.IsError {
-		// Error results carry a plain-text message, not JSON.
-		return map[string]any{"error": text}, res
-	}
+	text := res.Content[0].(*mcp.TextContent).Text
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(text), &payload); err != nil {
 		t.Fatalf("result is not JSON: %v\n%s", err, text)
 	}
-	return payload, res
+	return payload, nil
 }
+
+// mustCall is call for the happy path: any handler error fails the test.
+func mustCall[In any](t *testing.T, handler mcp.ToolHandlerFor[In, any], args In) map[string]any {
+	t.Helper()
+	payload, err := call(t, handler, args)
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	return payload
+}
+
+func intPtr(v int) *int { return &v }
 
 func makeVector(n int) model.Vector {
 	v := make(model.Vector, n)
@@ -74,7 +82,7 @@ func TestQueryTruncatesVector(t *testing.T) {
 	s := newTestServer(api)
 	_, handler := s.toolQuery()
 
-	payload, _ := call(t, handler, map[string]any{"query": "up", "max_series": 2})
+	payload := mustCall(t, handler, queryArgs{Query: "up", MaxSeries: intPtr(2)})
 	stats := payload["stats"].(map[string]any)
 	if stats["series_total"].(float64) != 5 {
 		t.Errorf("series_total = %v, want 5", stats["series_total"])
@@ -98,9 +106,9 @@ func TestQueryRangeTruncatesSamples(t *testing.T) {
 	s := newTestServer(api)
 	_, handler := s.toolQueryRange()
 
-	payload, _ := call(t, handler, map[string]any{
-		"query": "up", "start": "2024-01-01T00:00:00Z", "end": "2024-01-01T01:00:00Z",
-		"step": "1m", "max_samples_per_series": 3,
+	payload := mustCall(t, handler, queryRangeArgs{
+		Query: "up", Start: "2024-01-01T00:00:00Z", End: "2024-01-01T01:00:00Z",
+		Step: "1m", MaxSamplesPerSeries: intPtr(3),
 	})
 	stats := payload["stats"].(map[string]any)
 	if stats["samples_total"].(float64) != 10 {
@@ -118,11 +126,11 @@ func TestQueryRangeRejectsBadRange(t *testing.T) {
 	s := newTestServer(&fakeAPI{})
 	_, handler := s.toolQueryRange()
 
-	_, res := call(t, handler, map[string]any{
-		"query": "up", "start": "2024-01-01T01:00:00Z", "end": "2024-01-01T00:00:00Z", "step": "1m",
+	_, err := call(t, handler, queryRangeArgs{
+		Query: "up", Start: "2024-01-01T01:00:00Z", End: "2024-01-01T00:00:00Z", Step: "1m",
 	})
-	if !res.IsError {
-		t.Errorf("expected error result for end before start")
+	if err == nil {
+		t.Errorf("expected error for end before start")
 	}
 }
 
@@ -137,7 +145,7 @@ func TestSeriesLimit(t *testing.T) {
 	s := newTestServer(api)
 	_, handler := s.toolSeries()
 
-	payload, _ := call(t, handler, map[string]any{"matches": []any{"up"}, "limit": 2})
+	payload := mustCall(t, handler, seriesArgs{Matches: []string{"up"}, Limit: intPtr(2)})
 	if payload["total"].(float64) != 5 {
 		t.Errorf("total = %v, want 5", payload["total"])
 	}
@@ -156,7 +164,7 @@ func TestLabelValuesLimit(t *testing.T) {
 	s := newTestServer(api)
 	_, handler := s.toolLabelValues()
 
-	payload, _ := call(t, handler, map[string]any{"label": "job", "limit": 2})
+	payload := mustCall(t, handler, labelValuesArgs{Label: "job", Limit: intPtr(2)})
 	if payload["total"].(float64) != 4 {
 		t.Errorf("total = %v, want 4", payload["total"])
 	}
@@ -173,9 +181,8 @@ func TestSearchNotReady(t *testing.T) {
 	s := newTestServer(&fakeAPI{})
 	_, handler := s.toolSearch()
 
-	_, res := call(t, handler, map[string]any{"query": "http"})
-	if !res.IsError {
-		t.Errorf("expected error result when index is empty")
+	if _, err := call(t, handler, searchArgs{Query: "http"}); err == nil {
+		t.Errorf("expected error when index is empty")
 	}
 }
 
@@ -184,7 +191,7 @@ func TestSearchUsesIndex(t *testing.T) {
 	s.index.Build([]search.Document{{Metric: "http_request_duration_seconds", Type: "histogram", Help: "HTTP request duration."}})
 	_, handler := s.toolSearch()
 
-	payload, _ := call(t, handler, map[string]any{"query": "http request"})
+	payload := mustCall(t, handler, searchArgs{Query: "http request"})
 	if payload["result_count"].(float64) != 1 {
 		t.Errorf("result_count = %v, want 1", payload["result_count"])
 	}
@@ -197,7 +204,7 @@ func TestTSDBStatus(t *testing.T) {
 	s := newTestServer(api)
 	_, handler := s.toolTSDBStatus()
 
-	payload, _ := call(t, handler, map[string]any{})
+	payload := mustCall(t, handler, noArgs{})
 	head := payload["headStats"].(map[string]any)
 	if head["numSeries"].(float64) != 12345 {
 		t.Errorf("numSeries = %v, want 12345", head["numSeries"])
@@ -217,7 +224,7 @@ func TestRulesTypeFilter(t *testing.T) {
 	s := newTestServer(api)
 	_, handler := s.toolRules()
 
-	payload, _ := call(t, handler, map[string]any{"type": "alert"})
+	payload := mustCall(t, handler, rulesArgs{Type: "alert"})
 	groups := payload["groups"].([]any)
 	if len(groups) != 1 {
 		t.Fatalf("groups len = %d, want 1", len(groups))
@@ -241,7 +248,7 @@ func TestTargetsStateFilter(t *testing.T) {
 	s := newTestServer(api)
 	_, handler := s.toolTargets()
 
-	payload, _ := call(t, handler, map[string]any{"state": "dropped"})
+	payload := mustCall(t, handler, targetsArgs{State: "dropped"})
 	if _, ok := payload["active"]; ok {
 		t.Errorf("state=dropped should not include active targets")
 	}
@@ -259,7 +266,7 @@ func TestMetadataDefaultLimit(t *testing.T) {
 	s := newTestServer(api)
 	_, handler := s.toolMetadata()
 
-	call(t, handler, map[string]any{})
+	mustCall(t, handler, metadataArgs{})
 	if gotLimit != "100" {
 		t.Errorf("metadata limit passed to API = %q, want \"100\"", gotLimit)
 	}

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 )
@@ -26,18 +26,25 @@ const (
 
 // jsonResult renders v as compact JSON. Compact (non-indented) output is
 // deliberate: MCP results are consumed by models, so we minimise token usage.
-func jsonResult(v any) (*mcp.CallToolResult, error) {
+//
+// The three return values match the shape of an mcp.ToolHandlerFor, so
+// handlers can `return jsonResult(payload)` directly. The output type is any,
+// which tells the SDK not to generate an output schema: Prometheus payloads
+// are dynamic maps rather than fixed structs.
+func jsonResult(v any) (*mcp.CallToolResult, any, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
-		return mcp.NewToolResultErrorFromErr("marshaling result", err), nil
+		return nil, nil, fmt.Errorf("marshaling result: %w", err)
 	}
-	return mcp.NewToolResultText(string(b)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: string(b)}},
+	}, nil, nil
 }
 
 // listResult renders a bounded list response with pagination metadata so a
 // client can tell when a result was truncated and request more with a higher
 // limit.
-func listResult(data any, total, returned int, truncated bool, warnings promv1.Warnings) (*mcp.CallToolResult, error) {
+func listResult(data any, total, returned int, truncated bool, warnings promv1.Warnings) (*mcp.CallToolResult, any, error) {
 	payload := map[string]any{
 		"data":     data,
 		"total":    total,
@@ -125,7 +132,7 @@ func shapeQueryResult(value model.Value, maxSeries, maxSamplesPerSeries int) (an
 }
 
 // queryResultWithWarnings renders a bounded query result plus stats/warnings.
-func queryResultWithWarnings(value model.Value, maxSeries, maxSamplesPerSeries int, warnings promv1.Warnings) (*mcp.CallToolResult, error) {
+func queryResultWithWarnings(value model.Value, maxSeries, maxSamplesPerSeries int, warnings promv1.Warnings) (*mcp.CallToolResult, any, error) {
 	result, stats := shapeQueryResult(value, maxSeries, maxSamplesPerSeries)
 	payload := map[string]any{
 		"resultType": stats.ResultType,
@@ -138,12 +145,12 @@ func queryResultWithWarnings(value model.Value, maxSeries, maxSamplesPerSeries i
 	return jsonResult(payload)
 }
 
-func queryOptions(req mcp.CallToolRequest) []promv1.Option {
-	var opts []promv1.Option
-	if t := req.GetFloat("timeout_seconds", 0); t > 0 {
-		opts = append(opts, promv1.WithTimeout(time.Duration(t*float64(time.Second))))
+// queryOptions turns an optional timeout into Prometheus client options.
+func queryOptions(timeoutSeconds *float64) []promv1.Option {
+	if timeoutSeconds == nil || *timeoutSeconds <= 0 {
+		return nil
 	}
-	return opts
+	return []promv1.Option{promv1.WithTimeout(time.Duration(*timeoutSeconds * float64(time.Second)))}
 }
 
 // parseTimeArg accepts RFC3339 (with or without nanoseconds) or Unix seconds
@@ -164,21 +171,21 @@ func parseTimeArg(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unrecognized time format: %q (want RFC3339 or Unix seconds)", s)
 }
 
-func parseOptionalRange(req mcp.CallToolRequest) (time.Time, time.Time, error) {
-	startStr := req.GetString("start", "")
-	endStr := req.GetString("end", "")
+// parseOptionalRange parses an optional start/end pair, leaving either side as
+// the zero time when the corresponding argument is absent.
+func parseOptionalRange(startStr, endStr string) (time.Time, time.Time, error) {
 	var start, end time.Time
 	var err error
 	if startStr != "" {
 		start, err = parseTimeArg(startStr)
 		if err != nil {
-			return time.Time{}, time.Time{}, err
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid start: %w", err)
 		}
 	}
 	if endStr != "" {
 		end, err = parseTimeArg(endStr)
 		if err != nil {
-			return time.Time{}, time.Time{}, err
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid end: %w", err)
 		}
 	}
 	return start, end, nil

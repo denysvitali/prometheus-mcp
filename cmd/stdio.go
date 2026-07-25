@@ -33,7 +33,7 @@ var stdioCmd = &cobra.Command{
 		})
 		srv.StartBackground(ctx)
 		logger.Info("starting prometheus-mcp in stdio mode")
-		return srv.ServeStdio()
+		return srv.ServeStdio(ctx)
 	},
 }
 

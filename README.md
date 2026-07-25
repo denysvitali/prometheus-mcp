@@ -4,7 +4,7 @@ An [MCP](https://modelcontextprotocol.io/) server that exposes the Prometheus
 HTTP API to MCP-compatible clients (Claude Desktop, IDEs, custom agents, …).
 
 It wraps the [official Prometheus Go client](https://github.com/prometheus/client_golang)
-and speaks MCP via [mcp-go](https://github.com/mark3labs/mcp-go).
+and speaks MCP via the [official MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk).
 
 ## Features
 

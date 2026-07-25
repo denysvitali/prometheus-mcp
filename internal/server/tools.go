@@ -6,65 +6,75 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 )
 
 func (s *Server) registerTools() {
-	s.mcp.AddTool(s.toolSearch())
-	s.mcp.AddTool(s.toolQuery())
-	s.mcp.AddTool(s.toolQueryRange())
-	s.mcp.AddTool(s.toolQueryExemplars())
-	s.mcp.AddTool(s.toolLabelNames())
-	s.mcp.AddTool(s.toolLabelValues())
-	s.mcp.AddTool(s.toolSeries())
-	s.mcp.AddTool(s.toolTargets())
-	s.mcp.AddTool(s.toolAlerts())
-	s.mcp.AddTool(s.toolRules())
-	s.mcp.AddTool(s.toolMetadata())
-	s.mcp.AddTool(s.toolTSDBStatus())
-	s.mcp.AddTool(s.toolAlertManagers())
-	s.mcp.AddTool(s.toolWalReplay())
-	s.mcp.AddTool(s.toolStatusConfig())
-	s.mcp.AddTool(s.toolStatusFlags())
-	s.mcp.AddTool(s.toolBuildInfo())
-	s.mcp.AddTool(s.toolRuntimeInfo())
+	register(s.mcp, s.toolSearch)
+	register(s.mcp, s.toolQuery)
+	register(s.mcp, s.toolQueryRange)
+	register(s.mcp, s.toolQueryExemplars)
+	register(s.mcp, s.toolLabelNames)
+	register(s.mcp, s.toolLabelValues)
+	register(s.mcp, s.toolSeries)
+	register(s.mcp, s.toolTargets)
+	register(s.mcp, s.toolAlerts)
+	register(s.mcp, s.toolRules)
+	register(s.mcp, s.toolMetadata)
+	register(s.mcp, s.toolTSDBStatus)
+	register(s.mcp, s.toolAlertManagers)
+	register(s.mcp, s.toolWalReplay)
+	register(s.mcp, s.toolStatusConfig)
+	register(s.mcp, s.toolStatusFlags)
+	register(s.mcp, s.toolBuildInfo)
+	register(s.mcp, s.toolRuntimeInfo)
 }
 
-func readOnly(desc string) []mcp.ToolOption {
-	return []mcp.ToolOption{
-		mcp.WithDescription(desc),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithDestructiveHintAnnotation(false),
-		mcp.WithOpenWorldHintAnnotation(true),
+// register adds a tool built by def to srv. It exists because Go cannot expand
+// a two-value call into the three parameters of mcp.AddTool; the input type is
+// inferred from def's handler, so each tool keeps its own typed arguments.
+func register[In any](srv *mcp.Server, def func() (*mcp.Tool, mcp.ToolHandlerFor[In, any])) {
+	tool, handler := def()
+	mcp.AddTool(srv, tool, handler)
+}
+
+// noArgs is the input type for tools that take no parameters.
+type noArgs struct{}
+
+// readOnlyTool builds a tool definition annotated as a non-destructive,
+// open-world read. Every tool in this server only reads from Prometheus.
+func readOnlyTool(name, description string) *mcp.Tool {
+	no, yes := false, true
+	return &mcp.Tool{
+		Name:        name,
+		Description: description,
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:    true,
+			DestructiveHint: &no,
+			OpenWorldHint:   &yes,
+		},
 	}
 }
 
-func (s *Server) toolSearch() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("Search the Prometheus metric catalogue (names, help text, units) by keyword or natural-language query. Use this first to discover relevant metrics before running queries."),
-		mcp.WithString("query", mcp.Required(),
-			mcp.Description("Keyword or natural-language query (e.g. 'http request latency', 'node memory free', 'kube pod status'). Partial metric-name prefixes like 'http_req' also match.")),
-		mcp.WithNumber("limit",
-			mcp.Description("Maximum number of hits to return. Defaults to 20.")),
-		mcp.WithString("type",
-			mcp.Description("Optional metric type filter (counter, gauge, histogram, summary, unknown).")),
-	)
-	tool := mcp.NewTool("prometheus_search", opts...)
+type searchArgs struct {
+	Query string `json:"query" jsonschema:"Keyword or natural-language query (e.g. 'http request latency', 'node memory free', 'kube pod status'). Partial metric-name prefixes like 'http_req' also match."`
+	Limit *int   `json:"limit,omitempty" jsonschema:"Maximum number of hits to return. Defaults to 20."`
+	Type  string `json:"type,omitempty" jsonschema:"Optional metric type filter (counter, gauge, histogram, summary, unknown)."`
+}
 
-	handler := func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query, err := req.RequireString("query")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		limit := req.GetInt("limit", 20)
-		typeFilter := req.GetString("type", "")
+func (s *Server) toolSearch() (*mcp.Tool, mcp.ToolHandlerFor[searchArgs, any]) {
+	tool := readOnlyTool("prometheus_search",
+		"Search the Prometheus metric catalogue (names, help text, units) by keyword or natural-language query. Use this first to discover relevant metrics before running queries.")
 
+	handler := func(_ context.Context, _ *mcp.CallToolRequest, args searchArgs) (*mcp.CallToolResult, any, error) {
+		limit := boundedLimit(args.Limit, 20)
 		if s.index.Size() == 0 {
-			return mcp.NewToolResultError("metric index is not ready yet; wait a few seconds after startup or check server logs for refresh errors"), nil
+			return nil, nil, fmt.Errorf("metric index is not ready yet; wait a few seconds after startup or check server logs for refresh errors")
 		}
-		hits := s.index.Search(query, limit, typeFilter)
+		hits := s.index.Search(args.Query, limit, args.Type)
 		return jsonResult(map[string]any{
-			"query":           query,
+			"query":           args.Query,
 			"results":         hits,
 			"result_count":    len(hits),
 			"indexed_metrics": s.index.Size(),
@@ -75,33 +85,26 @@ func (s *Server) toolSearch() (mcp.Tool, func(context.Context, mcp.CallToolReque
 	return tool, handler
 }
 
-func (s *Server) toolQuery() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("Evaluate a PromQL instant query against Prometheus."),
-		mcp.WithString("query", mcp.Required(),
-			mcp.Description("PromQL expression to evaluate (e.g. 'up', 'rate(http_requests_total[5m])').")),
-		mcp.WithString("time",
-			mcp.Description("Evaluation timestamp, RFC3339 or Unix seconds. Defaults to server time.")),
-		mcp.WithNumber("timeout_seconds",
-			mcp.Description("Optional query timeout in seconds.")),
-		mcp.WithNumber("max_series",
-			mcp.Description(fmt.Sprintf("Maximum number of series to return. Defaults to %d; 0 disables the cap.", defaultQueryMaxSeries))),
-	)
-	tool := mcp.NewTool("prometheus_query", opts...)
+type queryArgs struct {
+	Query          string   `json:"query" jsonschema:"PromQL expression to evaluate (e.g. 'up', 'rate(http_requests_total[5m])')."`
+	Time           string   `json:"time,omitempty" jsonschema:"Evaluation timestamp, RFC3339 or Unix seconds. Defaults to server time."`
+	TimeoutSeconds *float64 `json:"timeout_seconds,omitempty" jsonschema:"Optional query timeout in seconds."`
+	MaxSeries      *int     `json:"max_series,omitempty" jsonschema:"Maximum number of series to return. Defaults to 100; 0 disables the cap."`
+}
 
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query, err := req.RequireString("query")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		ts, err := parseTimeArg(req.GetString("time", ""))
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid time", err), nil
-		}
-		maxSeries := boundedLimit(req.GetInt("max_series", defaultQueryMaxSeries), defaultQueryMaxSeries)
+func (s *Server) toolQuery() (*mcp.Tool, mcp.ToolHandlerFor[queryArgs, any]) {
+	tool := readOnlyTool("prometheus_query", "Evaluate a PromQL instant query against Prometheus.")
 
-		value, warnings, err := s.prom.API.Query(ctx, query, ts, queryOptions(req)...)
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args queryArgs) (*mcp.CallToolResult, any, error) {
+		ts, err := parseTimeArg(args.Time)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("query failed", err), nil
+			return nil, nil, fmt.Errorf("invalid time: %w", err)
+		}
+		maxSeries := boundedLimit(args.MaxSeries, defaultQueryMaxSeries)
+
+		value, warnings, err := s.prom.API.Query(ctx, args.Query, ts, queryOptions(args.TimeoutSeconds)...)
+		if err != nil {
+			return nil, nil, fmt.Errorf("query failed: %w", err)
 		}
 		return queryResultWithWarnings(value, maxSeries, 0, warnings)
 	}
@@ -109,68 +112,45 @@ func (s *Server) toolQuery() (mcp.Tool, func(context.Context, mcp.CallToolReques
 	return tool, handler
 }
 
-func (s *Server) toolQueryRange() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("Evaluate a PromQL query over a time range."),
-		mcp.WithString("query", mcp.Required(),
-			mcp.Description("PromQL expression to evaluate.")),
-		mcp.WithString("start", mcp.Required(),
-			mcp.Description("Start timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithString("end", mcp.Required(),
-			mcp.Description("End timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithString("step", mcp.Required(),
-			mcp.Description("Resolution step as a Go duration (e.g. '15s', '1m', '5m').")),
-		mcp.WithNumber("timeout_seconds",
-			mcp.Description("Optional query timeout in seconds.")),
-		mcp.WithNumber("max_series",
-			mcp.Description(fmt.Sprintf("Maximum number of series to return. Defaults to %d; 0 disables the cap.", defaultRangeMaxSeries))),
-		mcp.WithNumber("max_samples_per_series",
-			mcp.Description(fmt.Sprintf("Maximum number of samples kept per series. Defaults to %d; 0 disables the cap.", defaultRangeMaxSamplesPerSeries))),
-	)
-	tool := mcp.NewTool("prometheus_query_range", opts...)
+type queryRangeArgs struct {
+	Query               string   `json:"query" jsonschema:"PromQL expression to evaluate."`
+	Start               string   `json:"start" jsonschema:"Start timestamp (RFC3339 or Unix seconds)."`
+	End                 string   `json:"end" jsonschema:"End timestamp (RFC3339 or Unix seconds)."`
+	Step                string   `json:"step" jsonschema:"Resolution step as a Go duration (e.g. '15s', '1m', '5m')."`
+	TimeoutSeconds      *float64 `json:"timeout_seconds,omitempty" jsonschema:"Optional query timeout in seconds."`
+	MaxSeries           *int     `json:"max_series,omitempty" jsonschema:"Maximum number of series to return. Defaults to 50; 0 disables the cap."`
+	MaxSamplesPerSeries *int     `json:"max_samples_per_series,omitempty" jsonschema:"Maximum number of samples kept per series. Defaults to 100; 0 disables the cap."`
+}
 
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query, err := req.RequireString("query")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		startStr, err := req.RequireString("start")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		endStr, err := req.RequireString("end")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		stepStr, err := req.RequireString("step")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
+func (s *Server) toolQueryRange() (*mcp.Tool, mcp.ToolHandlerFor[queryRangeArgs, any]) {
+	tool := readOnlyTool("prometheus_query_range", "Evaluate a PromQL query over a time range.")
 
-		start, err := parseTimeArg(startStr)
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args queryRangeArgs) (*mcp.CallToolResult, any, error) {
+		start, err := parseTimeArg(args.Start)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid start", err), nil
+			return nil, nil, fmt.Errorf("invalid start: %w", err)
 		}
-		end, err := parseTimeArg(endStr)
+		end, err := parseTimeArg(args.End)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid end", err), nil
+			return nil, nil, fmt.Errorf("invalid end: %w", err)
 		}
-		step, err := time.ParseDuration(stepStr)
+		step, err := time.ParseDuration(args.Step)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid step", err), nil
+			return nil, nil, fmt.Errorf("invalid step: %w", err)
 		}
 		if step <= 0 {
-			return mcp.NewToolResultError("step must be a positive duration"), nil
+			return nil, nil, fmt.Errorf("step must be a positive duration")
 		}
 		if !end.After(start) {
-			return mcp.NewToolResultError("end must be after start"), nil
+			return nil, nil, fmt.Errorf("end must be after start")
 		}
-		maxSeries := boundedLimit(req.GetInt("max_series", defaultRangeMaxSeries), defaultRangeMaxSeries)
-		maxSamples := boundedLimit(req.GetInt("max_samples_per_series", defaultRangeMaxSamplesPerSeries), defaultRangeMaxSamplesPerSeries)
+		maxSeries := boundedLimit(args.MaxSeries, defaultRangeMaxSeries)
+		maxSamples := boundedLimit(args.MaxSamplesPerSeries, defaultRangeMaxSamplesPerSeries)
 
 		r := promv1.Range{Start: start, End: end, Step: step}
-		value, warnings, err := s.prom.API.QueryRange(ctx, query, r, queryOptions(req)...)
+		value, warnings, err := s.prom.API.QueryRange(ctx, args.Query, r, queryOptions(args.TimeoutSeconds)...)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("range query failed", err), nil
+			return nil, nil, fmt.Errorf("range query failed: %w", err)
 		}
 		return queryResultWithWarnings(value, maxSeries, maxSamples, warnings)
 	}
@@ -178,45 +158,31 @@ func (s *Server) toolQueryRange() (mcp.Tool, func(context.Context, mcp.CallToolR
 	return tool, handler
 }
 
-func (s *Server) toolQueryExemplars() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("Query exemplars (e.g. trace IDs attached to histogram buckets) over a time range."),
-		mcp.WithString("query", mcp.Required(),
-			mcp.Description("PromQL expression selecting the exemplars to return.")),
-		mcp.WithString("start", mcp.Required(),
-			mcp.Description("Start timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithString("end", mcp.Required(),
-			mcp.Description("End timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithNumber("limit",
-			mcp.Description(fmt.Sprintf("Maximum number of series with exemplars to return. Defaults to %d; 0 disables the cap.", defaultListLimit))),
-	)
-	tool := mcp.NewTool("prometheus_query_exemplars", opts...)
+type queryExemplarsArgs struct {
+	Query string `json:"query" jsonschema:"PromQL expression selecting the exemplars to return."`
+	Start string `json:"start" jsonschema:"Start timestamp (RFC3339 or Unix seconds)."`
+	End   string `json:"end" jsonschema:"End timestamp (RFC3339 or Unix seconds)."`
+	Limit *int   `json:"limit,omitempty" jsonschema:"Maximum number of series with exemplars to return. Defaults to 500; 0 disables the cap."`
+}
 
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		query, err := req.RequireString("query")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		startStr, err := req.RequireString("start")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		endStr, err := req.RequireString("end")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		start, err := parseTimeArg(startStr)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid start", err), nil
-		}
-		end, err := parseTimeArg(endStr)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid end", err), nil
-		}
-		limit := boundedLimit(req.GetInt("limit", defaultListLimit), defaultListLimit)
+func (s *Server) toolQueryExemplars() (*mcp.Tool, mcp.ToolHandlerFor[queryExemplarsArgs, any]) {
+	tool := readOnlyTool("prometheus_query_exemplars",
+		"Query exemplars (e.g. trace IDs attached to histogram buckets) over a time range.")
 
-		exemplars, err := s.prom.API.QueryExemplars(ctx, query, start, end)
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args queryExemplarsArgs) (*mcp.CallToolResult, any, error) {
+		start, err := parseTimeArg(args.Start)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("exemplars query failed", err), nil
+			return nil, nil, fmt.Errorf("invalid start: %w", err)
+		}
+		end, err := parseTimeArg(args.End)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid end: %w", err)
+		}
+		limit := boundedLimit(args.Limit, defaultListLimit)
+
+		exemplars, err := s.prom.API.QueryExemplars(ctx, args.Query, start, end)
+		if err != nil {
+			return nil, nil, fmt.Errorf("exemplars query failed: %w", err)
 		}
 		out, total, truncated := truncateSlice(exemplars, limit)
 		return listResult(out, total, len(out), truncated, nil)
@@ -225,30 +191,26 @@ func (s *Server) toolQueryExemplars() (mcp.Tool, func(context.Context, mcp.CallT
 	return tool, handler
 }
 
-func (s *Server) toolLabelNames() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("List label names present in the Prometheus TSDB."),
-		mcp.WithArray("matches",
-			mcp.Description("Optional series selectors (e.g. ['up', 'process_cpu_seconds_total']).")),
-		mcp.WithString("start",
-			mcp.Description("Optional start timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithString("end",
-			mcp.Description("Optional end timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithNumber("limit",
-			mcp.Description(fmt.Sprintf("Maximum number of label names to return. Defaults to %d; 0 disables the cap.", defaultListLimit))),
-	)
-	tool := mcp.NewTool("prometheus_label_names", opts...)
+type labelNamesArgs struct {
+	Matches []string `json:"matches,omitempty" jsonschema:"Optional series selectors (e.g. ['up', 'process_cpu_seconds_total'])."`
+	Start   string   `json:"start,omitempty" jsonschema:"Optional start timestamp (RFC3339 or Unix seconds)."`
+	End     string   `json:"end,omitempty" jsonschema:"Optional end timestamp (RFC3339 or Unix seconds)."`
+	Limit   *int     `json:"limit,omitempty" jsonschema:"Maximum number of label names to return. Defaults to 500; 0 disables the cap."`
+}
 
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		matches := req.GetStringSlice("matches", nil)
-		start, end, err := parseOptionalRange(req)
+func (s *Server) toolLabelNames() (*mcp.Tool, mcp.ToolHandlerFor[labelNamesArgs, any]) {
+	tool := readOnlyTool("prometheus_label_names", "List label names present in the Prometheus TSDB.")
+
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args labelNamesArgs) (*mcp.CallToolResult, any, error) {
+		start, end, err := parseOptionalRange(args.Start, args.End)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid time", err), nil
+			return nil, nil, err
 		}
-		limit := boundedLimit(req.GetInt("limit", defaultListLimit), defaultListLimit)
+		limit := boundedLimit(args.Limit, defaultListLimit)
 
-		names, warnings, err := s.prom.API.LabelNames(ctx, matches, start, end)
+		names, warnings, err := s.prom.API.LabelNames(ctx, args.Matches, start, end)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("label names failed", err), nil
+			return nil, nil, fmt.Errorf("label names failed: %w", err)
 		}
 		out, total, truncated := truncateSlice(names, limit)
 		return listResult(out, total, len(out), truncated, warnings)
@@ -257,36 +219,27 @@ func (s *Server) toolLabelNames() (mcp.Tool, func(context.Context, mcp.CallToolR
 	return tool, handler
 }
 
-func (s *Server) toolLabelValues() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("List the values of a given label."),
-		mcp.WithString("label", mcp.Required(),
-			mcp.Description("Name of the label (e.g. 'job', '__name__').")),
-		mcp.WithArray("matches",
-			mcp.Description("Optional series selectors to filter the result.")),
-		mcp.WithString("start",
-			mcp.Description("Optional start timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithString("end",
-			mcp.Description("Optional end timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithNumber("limit",
-			mcp.Description(fmt.Sprintf("Maximum number of values to return. Defaults to %d; 0 disables the cap.", defaultListLimit))),
-	)
-	tool := mcp.NewTool("prometheus_label_values", opts...)
+type labelValuesArgs struct {
+	Label   string   `json:"label" jsonschema:"Name of the label (e.g. 'job', '__name__')."`
+	Matches []string `json:"matches,omitempty" jsonschema:"Optional series selectors to filter the result."`
+	Start   string   `json:"start,omitempty" jsonschema:"Optional start timestamp (RFC3339 or Unix seconds)."`
+	End     string   `json:"end,omitempty" jsonschema:"Optional end timestamp (RFC3339 or Unix seconds)."`
+	Limit   *int     `json:"limit,omitempty" jsonschema:"Maximum number of values to return. Defaults to 500; 0 disables the cap."`
+}
 
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		label, err := req.RequireString("label")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		matches := req.GetStringSlice("matches", nil)
-		start, end, err := parseOptionalRange(req)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid time", err), nil
-		}
-		limit := boundedLimit(req.GetInt("limit", defaultListLimit), defaultListLimit)
+func (s *Server) toolLabelValues() (*mcp.Tool, mcp.ToolHandlerFor[labelValuesArgs, any]) {
+	tool := readOnlyTool("prometheus_label_values", "List the values of a given label.")
 
-		values, warnings, err := s.prom.API.LabelValues(ctx, label, matches, start, end)
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args labelValuesArgs) (*mcp.CallToolResult, any, error) {
+		start, end, err := parseOptionalRange(args.Start, args.End)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("label values failed", err), nil
+			return nil, nil, err
+		}
+		limit := boundedLimit(args.Limit, defaultListLimit)
+
+		values, warnings, err := s.prom.API.LabelValues(ctx, args.Label, args.Matches, start, end)
+		if err != nil {
+			return nil, nil, fmt.Errorf("label values failed: %w", err)
 		}
 		out, total, truncated := truncateSlice(values, limit)
 		return listResult(out, total, len(out), truncated, warnings)
@@ -295,33 +248,29 @@ func (s *Server) toolLabelValues() (mcp.Tool, func(context.Context, mcp.CallTool
 	return tool, handler
 }
 
-func (s *Server) toolSeries() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("Find time series matching the provided label selectors."),
-		mcp.WithArray("matches", mcp.Required(),
-			mcp.Description("One or more PromQL series selectors (e.g. ['up{job=\"prometheus\"}']).")),
-		mcp.WithString("start",
-			mcp.Description("Optional start timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithString("end",
-			mcp.Description("Optional end timestamp (RFC3339 or Unix seconds).")),
-		mcp.WithNumber("limit",
-			mcp.Description(fmt.Sprintf("Maximum number of series to return. Defaults to %d; 0 disables the cap.", defaultListLimit))),
-	)
-	tool := mcp.NewTool("prometheus_series", opts...)
+type seriesArgs struct {
+	Matches []string `json:"matches" jsonschema:"One or more PromQL series selectors (e.g. ['up{job=\"prometheus\"}'])."`
+	Start   string   `json:"start,omitempty" jsonschema:"Optional start timestamp (RFC3339 or Unix seconds)."`
+	End     string   `json:"end,omitempty" jsonschema:"Optional end timestamp (RFC3339 or Unix seconds)."`
+	Limit   *int     `json:"limit,omitempty" jsonschema:"Maximum number of series to return. Defaults to 500; 0 disables the cap."`
+}
 
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		matches, err := req.RequireStringSlice("matches")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		start, end, err := parseOptionalRange(req)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("invalid time", err), nil
-		}
-		limit := boundedLimit(req.GetInt("limit", defaultListLimit), defaultListLimit)
+func (s *Server) toolSeries() (*mcp.Tool, mcp.ToolHandlerFor[seriesArgs, any]) {
+	tool := readOnlyTool("prometheus_series", "Find time series matching the provided label selectors.")
 
-		series, warnings, err := s.prom.API.Series(ctx, matches, start, end)
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args seriesArgs) (*mcp.CallToolResult, any, error) {
+		if len(args.Matches) == 0 {
+			return nil, nil, fmt.Errorf("matches must contain at least one series selector")
+		}
+		start, end, err := parseOptionalRange(args.Start, args.End)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("series failed", err), nil
+			return nil, nil, err
+		}
+		limit := boundedLimit(args.Limit, defaultListLimit)
+
+		series, warnings, err := s.prom.API.Series(ctx, args.Matches, start, end)
+		if err != nil {
+			return nil, nil, fmt.Errorf("series failed: %w", err)
 		}
 		out, total, truncated := truncateSlice(series, limit)
 		return listResult(out, total, len(out), truncated, warnings)
@@ -330,27 +279,25 @@ func (s *Server) toolSeries() (mcp.Tool, func(context.Context, mcp.CallToolReque
 	return tool, handler
 }
 
-func (s *Server) toolTargets() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("List Prometheus scrape targets."),
-		mcp.WithString("state",
-			mcp.Description("Which targets to return: 'active', 'dropped' or 'all'. Defaults to 'active'.")),
-		mcp.WithNumber("limit",
-			mcp.Description(fmt.Sprintf("Maximum number of targets to return per state. Defaults to %d; 0 disables the cap.", defaultTargetsLimit))),
-	)
-	tool := mcp.NewTool("prometheus_targets", opts...)
+type targetsArgs struct {
+	State string `json:"state,omitempty" jsonschema:"Which targets to return: 'active', 'dropped' or 'all'. Defaults to 'active'."`
+	Limit *int   `json:"limit,omitempty" jsonschema:"Maximum number of targets to return per state. Defaults to 200; 0 disables the cap."`
+}
 
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		state := req.GetString("state", "active")
-		limit := boundedLimit(req.GetInt("limit", defaultTargetsLimit), defaultTargetsLimit)
+func (s *Server) toolTargets() (*mcp.Tool, mcp.ToolHandlerFor[targetsArgs, any]) {
+	tool := readOnlyTool("prometheus_targets", "List Prometheus scrape targets.")
+
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args targetsArgs) (*mcp.CallToolResult, any, error) {
+		limit := boundedLimit(args.Limit, defaultTargetsLimit)
 
 		targets, err := s.prom.API.Targets(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("targets failed", err), nil
+			return nil, nil, fmt.Errorf("targets failed: %w", err)
 		}
 
 		payload := map[string]any{}
-		switch state {
-		case "active":
+		switch args.State {
+		case "active", "":
 			active, total, truncated := truncateSlice(targets.Active, limit)
 			payload["active"] = active
 			payload["active_total"] = total
@@ -364,7 +311,7 @@ func (s *Server) toolTargets() (mcp.Tool, func(context.Context, mcp.CallToolRequ
 			if truncated {
 				payload["dropped_truncated"] = true
 			}
-		case "all", "":
+		case "all":
 			active, aTotal, aTrunc := truncateSlice(targets.Active, limit)
 			dropped, dTotal, dTrunc := truncateSlice(targets.Dropped, limit)
 			payload["active"] = active
@@ -378,7 +325,7 @@ func (s *Server) toolTargets() (mcp.Tool, func(context.Context, mcp.CallToolRequ
 				payload["dropped_truncated"] = true
 			}
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf("invalid state %q: want 'active', 'dropped' or 'all'", state)), nil
+			return nil, nil, fmt.Errorf("invalid state %q: want 'active', 'dropped' or 'all'", args.State)
 		}
 		return jsonResult(payload)
 	}
@@ -386,13 +333,13 @@ func (s *Server) toolTargets() (mcp.Tool, func(context.Context, mcp.CallToolRequ
 	return tool, handler
 }
 
-func (s *Server) toolAlerts() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("prometheus_alerts", readOnly("List currently firing and pending Prometheus alerts.")...)
+func (s *Server) toolAlerts() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
+	tool := readOnlyTool("prometheus_alerts", "List currently firing and pending Prometheus alerts.")
 
-	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		alerts, err := s.prom.API.Alerts(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("alerts failed", err), nil
+			return nil, nil, fmt.Errorf("alerts failed: %w", err)
 		}
 		return jsonResult(alerts)
 	}
@@ -400,29 +347,28 @@ func (s *Server) toolAlerts() (mcp.Tool, func(context.Context, mcp.CallToolReque
 	return tool, handler
 }
 
-func (s *Server) toolRules() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("List the Prometheus recording and alerting rule groups."),
-		mcp.WithString("type",
-			mcp.Description("Optional rule type filter: 'alert' or 'record'. Defaults to both.")),
-	)
-	tool := mcp.NewTool("prometheus_rules", opts...)
+type rulesArgs struct {
+	Type string `json:"type,omitempty" jsonschema:"Optional rule type filter: 'alert' or 'record'. Defaults to both."`
+}
 
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		ruleType := req.GetString("type", "")
-		switch ruleType {
+func (s *Server) toolRules() (*mcp.Tool, mcp.ToolHandlerFor[rulesArgs, any]) {
+	tool := readOnlyTool("prometheus_rules", "List the Prometheus recording and alerting rule groups.")
+
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args rulesArgs) (*mcp.CallToolResult, any, error) {
+		switch args.Type {
 		case "", "all", "alert", "record":
 		default:
-			return mcp.NewToolResultError(fmt.Sprintf("invalid type %q: want 'alert' or 'record'", ruleType)), nil
+			return nil, nil, fmt.Errorf("invalid type %q: want 'alert' or 'record'", args.Type)
 		}
 
 		rules, err := s.prom.API.Rules(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("rules failed", err), nil
+			return nil, nil, fmt.Errorf("rules failed: %w", err)
 		}
-		if ruleType == "" || ruleType == "all" {
+		if args.Type == "" || args.Type == "all" {
 			return jsonResult(rules)
 		}
-		return jsonResult(filterRules(rules, ruleType))
+		return jsonResult(filterRules(rules, args.Type))
 	}
 
 	return tool, handler
@@ -458,26 +404,24 @@ func filterRules(rules promv1.RulesResult, filter string) promv1.RulesResult {
 	return out
 }
 
-func (s *Server) toolMetadata() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	opts := append(readOnly("Return metadata (type, help, unit) for ingested metrics."),
-		mcp.WithString("metric",
-			mcp.Description("Metric name to filter by. Empty returns metadata for all metrics (bounded by limit).")),
-		mcp.WithNumber("limit",
-			mcp.Description(fmt.Sprintf("Maximum number of metrics to return when metric is empty. Defaults to %d; 0 disables the cap.", defaultMetadataLimit))),
-	)
-	tool := mcp.NewTool("prometheus_metadata", opts...)
+type metadataArgs struct {
+	Metric string `json:"metric,omitempty" jsonschema:"Metric name to filter by. Empty returns metadata for all metrics (bounded by limit)."`
+	Limit  *int   `json:"limit,omitempty" jsonschema:"Maximum number of metrics to return when metric is empty. Defaults to 100; 0 disables the cap."`
+}
 
-	handler := func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		metric := req.GetString("metric", "")
-		limit := req.GetInt("limit", defaultMetadataLimit)
+func (s *Server) toolMetadata() (*mcp.Tool, mcp.ToolHandlerFor[metadataArgs, any]) {
+	tool := readOnlyTool("prometheus_metadata", "Return metadata (type, help, unit) for ingested metrics.")
+
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, args metadataArgs) (*mcp.CallToolResult, any, error) {
+		limit := boundedLimit(args.Limit, defaultMetadataLimit)
 
 		limitStr := ""
-		if metric == "" && limit > 0 {
+		if args.Metric == "" && limit > 0 {
 			limitStr = strconv.Itoa(limit)
 		}
-		metadata, err := s.prom.API.Metadata(ctx, metric, limitStr)
+		metadata, err := s.prom.API.Metadata(ctx, args.Metric, limitStr)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("metadata failed", err), nil
+			return nil, nil, fmt.Errorf("metadata failed: %w", err)
 		}
 		return jsonResult(map[string]any{
 			"data":  metadata,
@@ -488,14 +432,14 @@ func (s *Server) toolMetadata() (mcp.Tool, func(context.Context, mcp.CallToolReq
 	return tool, handler
 }
 
-func (s *Server) toolTSDBStatus() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("prometheus_tsdb_status",
-		readOnly("Return TSDB cardinality statistics: head series count and the top series/labels by count and memory. Useful for spotting high-cardinality metrics and gauging TSDB size.")...)
+func (s *Server) toolTSDBStatus() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
+	tool := readOnlyTool("prometheus_tsdb_status",
+		"Return TSDB cardinality statistics: head series count and the top series/labels by count and memory. Useful for spotting high-cardinality metrics and gauging TSDB size.")
 
-	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		status, err := s.prom.API.TSDB(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("tsdb status failed", err), nil
+			return nil, nil, fmt.Errorf("tsdb status failed: %w", err)
 		}
 		return jsonResult(status)
 	}
@@ -503,14 +447,14 @@ func (s *Server) toolTSDBStatus() (mcp.Tool, func(context.Context, mcp.CallToolR
 	return tool, handler
 }
 
-func (s *Server) toolAlertManagers() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("prometheus_alertmanagers",
-		readOnly("List the Alertmanager instances Prometheus currently knows about (active and dropped).")...)
+func (s *Server) toolAlertManagers() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
+	tool := readOnlyTool("prometheus_alertmanagers",
+		"List the Alertmanager instances Prometheus currently knows about (active and dropped).")
 
-	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		am, err := s.prom.API.AlertManagers(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("alertmanagers failed", err), nil
+			return nil, nil, fmt.Errorf("alertmanagers failed: %w", err)
 		}
 		return jsonResult(am)
 	}
@@ -518,14 +462,14 @@ func (s *Server) toolAlertManagers() (mcp.Tool, func(context.Context, mcp.CallTo
 	return tool, handler
 }
 
-func (s *Server) toolWalReplay() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("prometheus_wal_replay",
-		readOnly("Return the current WAL replay status (min, max, current segment).")...)
+func (s *Server) toolWalReplay() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
+	tool := readOnlyTool("prometheus_wal_replay",
+		"Return the current WAL replay status (min, max, current segment).")
 
-	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		status, err := s.prom.API.WalReplay(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("wal replay failed", err), nil
+			return nil, nil, fmt.Errorf("wal replay failed: %w", err)
 		}
 		return jsonResult(status)
 	}
@@ -533,14 +477,14 @@ func (s *Server) toolWalReplay() (mcp.Tool, func(context.Context, mcp.CallToolRe
 	return tool, handler
 }
 
-func (s *Server) toolStatusConfig() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("prometheus_status_config",
-		readOnly("Return the currently loaded Prometheus configuration (YAML).")...)
+func (s *Server) toolStatusConfig() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
+	tool := readOnlyTool("prometheus_status_config",
+		"Return the currently loaded Prometheus configuration (YAML).")
 
-	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		cfg, err := s.prom.API.Config(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("config failed", err), nil
+			return nil, nil, fmt.Errorf("config failed: %w", err)
 		}
 		return jsonResult(cfg)
 	}
@@ -548,14 +492,14 @@ func (s *Server) toolStatusConfig() (mcp.Tool, func(context.Context, mcp.CallToo
 	return tool, handler
 }
 
-func (s *Server) toolStatusFlags() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("prometheus_status_flags",
-		readOnly("Return the command-line flags Prometheus was launched with.")...)
+func (s *Server) toolStatusFlags() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
+	tool := readOnlyTool("prometheus_status_flags",
+		"Return the command-line flags Prometheus was launched with.")
 
-	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		flags, err := s.prom.API.Flags(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("flags failed", err), nil
+			return nil, nil, fmt.Errorf("flags failed: %w", err)
 		}
 		return jsonResult(flags)
 	}
@@ -563,14 +507,13 @@ func (s *Server) toolStatusFlags() (mcp.Tool, func(context.Context, mcp.CallTool
 	return tool, handler
 }
 
-func (s *Server) toolBuildInfo() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("prometheus_buildinfo",
-		readOnly("Return Prometheus server build information.")...)
+func (s *Server) toolBuildInfo() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
+	tool := readOnlyTool("prometheus_buildinfo", "Return Prometheus server build information.")
 
-	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		info, err := s.prom.API.Buildinfo(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("buildinfo failed", err), nil
+			return nil, nil, fmt.Errorf("buildinfo failed: %w", err)
 		}
 		return jsonResult(info)
 	}
@@ -578,14 +521,14 @@ func (s *Server) toolBuildInfo() (mcp.Tool, func(context.Context, mcp.CallToolRe
 	return tool, handler
 }
 
-func (s *Server) toolRuntimeInfo() (mcp.Tool, func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
-	tool := mcp.NewTool("prometheus_runtimeinfo",
-		readOnly("Return Prometheus server runtime information (GOMAXPROCS, storage, etc).")...)
+func (s *Server) toolRuntimeInfo() (*mcp.Tool, mcp.ToolHandlerFor[noArgs, any]) {
+	tool := readOnlyTool("prometheus_runtimeinfo",
+		"Return Prometheus server runtime information (GOMAXPROCS, storage, etc).")
 
-	handler := func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	handler := func(ctx context.Context, _ *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, any, error) {
 		info, err := s.prom.API.Runtimeinfo(ctx)
 		if err != nil {
-			return mcp.NewToolResultErrorFromErr("runtimeinfo failed", err), nil
+			return nil, nil, fmt.Errorf("runtimeinfo failed: %w", err)
 		}
 		return jsonResult(info)
 	}
@@ -593,11 +536,11 @@ func (s *Server) toolRuntimeInfo() (mcp.Tool, func(context.Context, mcp.CallTool
 	return tool, handler
 }
 
-// boundedLimit normalises a user-supplied limit. A negative value falls back
-// to def; 0 means unlimited and is preserved.
-func boundedLimit(v, def int) int {
-	if v < 0 {
+// boundedLimit normalises a user-supplied limit. An absent or negative value
+// falls back to def; 0 means unlimited and is preserved.
+func boundedLimit(v *int, def int) int {
+	if v == nil || *v < 0 {
 		return def
 	}
-	return v
+	return *v
 }
